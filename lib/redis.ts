@@ -319,3 +319,29 @@ export async function getStoredInstitutionalHistoryBulk(codes: string[]): Promis
   codes.forEach((code, i) => map.set(code, Array.isArray(values[i]) ? values[i]! : []));
   return map;
 }
+
+// ---- Daily notification record (for the in-app 通知 page) ----
+// The push notification itself is a lightweight "you have alerts today" nudge (see
+// check-alerts/route.ts) — the actual per-stock detail is written here instead, so the 通知 page
+// can show it even if the push never arrived (permission not granted, browser closed, etc).
+
+export interface DailyNotificationItem {
+  code: string;
+  name: string;
+  message: string;
+}
+
+const NOTIFICATIONS_TTL_SECONDS = 30 * 24 * 60 * 60; // one-off daily record, not routine cache — keep a month of history
+
+function notificationsKey(date: string): string {
+  return `notifications:${date}`;
+}
+
+export async function setDailyNotifications(date: string, items: DailyNotificationItem[]): Promise<void> {
+  await redis.set(notificationsKey(date), items, { ex: NOTIFICATIONS_TTL_SECONDS });
+}
+
+export async function getDailyNotifications(date: string): Promise<DailyNotificationItem[]> {
+  const raw = await redis.get<DailyNotificationItem[]>(notificationsKey(date));
+  return Array.isArray(raw) ? raw : [];
+}

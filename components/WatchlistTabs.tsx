@@ -1,7 +1,9 @@
 import Link from "next/link";
 
-export default function WatchlistTabs({ active }: { active: "tracked" | "all" }) {
-  const tabClass = (tab: "tracked" | "all") =>
+type Tab = "tracked" | "all" | "notifications";
+
+export default function WatchlistTabs({ active }: { active: Tab }) {
+  const tabClass = (tab: Tab) =>
     `flex-1 rounded-lg py-2 text-center text-sm font-medium transition-colors ${
       active === tab ? "bg-emerald-500 text-zinc-950" : "bg-zinc-900 text-zinc-400 hover:text-zinc-100"
     }`;
@@ -13,6 +15,9 @@ export default function WatchlistTabs({ active }: { active: "tracked" | "all" })
       </Link>
       <Link href="/market" className={tabClass("all")}>
         所有股票
+      </Link>
+      <Link href="/notifications" className={tabClass("notifications")}>
+        通知
       </Link>
     </div>
   );

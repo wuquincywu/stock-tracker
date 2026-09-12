@@ -10,6 +10,7 @@ import {
   markAlerted,
   markLevelAlerted,
   markStreakAlerted,
+  setDailyNotifications,
   wasAlreadyAlerted,
   wasLevelAlerted,
   wasStreakAlerted,
@@ -156,21 +157,25 @@ export async function GET(req: NextRequest) {
   let pruned = 0;
   let failed = 0;
 
-  // One push for the whole run instead of one per stock — a day with several stocks triggering
-  // at once used to mean several separate notifications; this bundles them into a single
-  // notification with one paragraph per stock, e.g.:
-  //   2330 台積電
-  //   站上 MA20、法人大買、外資連5買
-  //
-  //   2454 聯發科
-  //   站上 MA60、法人大賣、投信連5買、外資連5賣
+  // The push itself is just a lightweight "you have alerts today" nudge — the actual per-stock
+  // detail (one entry per stock, e.g. "2330 台積電" / "站上 MA20、法人大買、外資連5買") is written
+  // to Redis for the in-app 通知 page instead, so it's visible even if the push never arrives
+  // (permission not granted, browser/app closed, etc), not just squeezed into a notification body.
   if (messagesByCode.size > 0) {
-    const body = [...messagesByCode.entries()]
-      .map(([code, parts]) => `${code} ${nameByCode.get(code) ?? code}\n${parts.join("、")}`)
-      .join("\n\n");
+    const items = [...messagesByCode.entries()].map(([code, parts]) => ({
+      code,
+      name: nameByCode.get(code) ?? code,
+      message: parts.join("、"),
+    }));
+    const today = new Date().toISOString().slice(0, 10);
+    await setDailyNotifications(today, items);
 
     try {
-      const result = await broadcastPush({ title: "股票追蹤提醒", body, url: "/" });
+      const result = await broadcastPush({
+        title: "股票追蹤",
+        body: `今天有 ${items.length} 檔股票觸發提醒，點擊查看詳情`,
+        url: "/notifications",
+      });
       sent = result.sent;
       pruned = result.pruned;
       failed = result.failed;
