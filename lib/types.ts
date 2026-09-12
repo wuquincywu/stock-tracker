@@ -112,11 +112,9 @@ export interface MaSnapshot {
 
 export interface NotificationPart {
   text: string;
-  /** Drives an outline highlight on the 通知 page for a part that reports something freshly true
-   * right now, as opposed to an unchanged, ongoing state. True for: an MA alert whose direction
-   * actually flipped today (not just "still the same side as yesterday"); every 連續買賣 streak
-   * part, since the streak length itself is a new fact each day it continues. False for 法人分級,
-   * whose category (大買/小賣/...) can repeat identically across days without anything new. */
+  /** Drives an outline highlight on the 通知 page — true only for an MA alert whose direction
+   * actually flipped today (a genuine crossing moment, not just "still the same side as
+   * yesterday"). Always false for 法人分級/連續買賣 parts. */
   highlight: boolean;
 }
 

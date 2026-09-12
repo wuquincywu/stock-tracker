@@ -160,12 +160,9 @@ export async function processUserAlerts(userId: string, maLines: number[]): Prom
       const streak = result.streaks[category];
       if (threshold <= 0 || !streak || streak.length < threshold) continue;
 
-      // Always highlighted — unlike MA's above/below state (which can sit unchanged for days), the
-      // streak length itself is a new fact every day it continues (day 5 is different from day 4).
       appendMessage(
         result.code,
         `${INSTITUTIONAL_CATEGORY_LABEL[category]}連${streak.length}${streak.direction === "buy" ? "買" : "賣"}`,
-        true,
       );
       streakAlertCount++;
     }
