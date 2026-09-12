@@ -1,8 +1,8 @@
 # 股票追蹤（stock-tracker）
 
-個人用的台股（上市 TWSE ＋ 上櫃 TPEX）追蹤 PWA。輸入股號追蹤股票後，可以看到股價、均線、布林通道、三大法人買賣超（拆分外資／投信／自營商）、連續買賣天數，並在股價站上／跌破均線、法人分級、連續買賣達標時收到瀏覽器推播通知。也有一個涵蓋全市場約 2,400 檔股票（含 ETF）的「所有股票」瀏覽頁，篩選方式跟已追蹤股票頁面一致。
+台股（上市 TWSE ＋ 上櫃 TPEX）追蹤 PWA，給一個小群組（家人／朋友，不到 5 人）自己用。輸入股號追蹤股票後，可以看到股價、均線、布林通道、三大法人買賣超（拆分外資／投信／自營商）、連續買賣天數，並在股價站上／跌破均線、法人分級、連續買賣達標時收到瀏覽器推播通知。也有一個涵蓋全市場約 2,400 檔股票（含 ETF）的「所有股票」瀏覽頁，篩選方式跟已追蹤股票頁面一致。
 
-不是要上架的產品，是寫給自己用的工具，所以資料源全部走免費管道、沒有登入機制、也沒有多使用者概念。
+不是要對外上架的產品，所以資料源全部走免費管道、沒有密碼機制——第一次打開網站選一個名字（或自己新增一個）就完成「登入」，之後這台裝置就記得你是誰。每個人的追蹤清單、推播訂閱、通知設定各自獨立；股票清單、股價／法人歷史、全市場卡片快取這些不因人而異的資料則全部共用。詳見下方「多使用者」。
 
 ## 功能
 
@@ -27,10 +27,15 @@
 - 法人買賣超分級（大賣～大買）通知開關
 - 外資／投信／自營商／合計，各自獨立設定連續買賣天數門檻（0 表示停用）
 - 股價站上／跌破 MA5／20／60，各自獨立開關
-- 股價圖表資料範圍（1～24 個月）
+- 股價圖表資料範圍（1～24 個月，各自獨立設定）——只影響自己在已追蹤股票頁卡片的計算範圍；所有股票頁是全體共用的快取，固定用預設月數，不會因人而異
 
 ### FAQ（`/faq`）
 所有指標／門檻的計算方式與依據，包含誠實說明「大買／大賣」的 z-score 門檻是自訂的、不是業界標準。
+
+### 多使用者
+- 首次造訪沒有身分 cookie 時，`app/layout.tsx` 會擋下所有頁面、改顯示「你是誰」的名字選擇畫面（`components/UserPicker.tsx`）——可以選現有名字，也可以自己輸入新名字加入，沒有密碼
+- 選定後寫入裝置 cookie（一年有效），之後這台裝置都認得你；頁首有 `UserSwitcher.tsx` 可以切換身分
+- 已追蹤股票／所有股票的分頁按鈕上，若有還沒看過的推播通知會顯示提示點（`hasUnreadNotifications`）
 
 ## 技術架構
 
@@ -41,6 +46,8 @@
 
 ```
 app/
+  layout.tsx                   根 layout；沒有使用者 cookie 時直接擋下所有子頁面，改渲染 UserPicker
+  actions.ts                    Server actions：selectUser／addUser／switchUser
   page.tsx                     首頁（已追蹤股票）
   market/page.tsx               所有股票瀏覽頁
   stock/[code]/page.tsx         個股頁（唯讀，不即時抓資料）
@@ -59,12 +66,14 @@ app/
 lib/
   types.ts                     所有共用型別（含 WatchlistCardData）
   indicators.ts                均線、布林通道、法人分級、連買賣等純函式計算（`indicators.test.ts` 有對應 vitest 單元測試）
-  marketdata.ts                資料存取統一入口：依市場別＋來源優先序 dispatch、`getChartSeries`（暖身緩衝＋布林通道計算）、全市場卡片快取、回補邏輯
+  marketdata.ts                資料存取統一入口：依市場別＋來源優先序 dispatch、`getChartSeries`（暖身緩衝＋布林通道計算）、全市場卡片快取、回補邏輯（全市場資料不分使用者，共用）
   httpFetch.ts                 共用的 fetch 重試/退避包裝，TWSE／TPEX／FinMind 三個 client 都透過這層打外部 API
   twse.ts / tpex.ts / finmind.ts  三個資料源各自的 API client
-  redis.ts                     所有 Redis 讀寫（追蹤清單、訂閱、設定、歷史資料累積、全市場卡片快取）
-  push.ts                      web-push 包裝
+  redis.ts                     所有 Redis 讀寫；個人資料相關函式（追蹤清單、推播訂閱、通知設定、去重歷史）第一個參數都是 `userId`，全市場資料（股票清單、歷史、卡片快取）維持不分使用者
+  users.ts                     目前裝置的使用者身分查詢（讀 cookie＋比對 Redis 使用者名單，`cache()` 包一層讓同一個 request 內共用一次查詢結果）
+  push.ts                      web-push 包裝（`broadcastPush(userId, payload)`，只送給該使用者自己的訂閱）
 components/
+  UserPicker.tsx / UserSwitcher.tsx  「你是誰」名字選擇畫面／頁首切換身分
   WatchlistCard.tsx            已追蹤股票／所有股票共用的股票卡片
   WatchlistClient.tsx           已追蹤股票頁的篩選＋清單邏輯
   MarketOverviewClient.tsx      所有股票頁的篩選＋分頁邏輯（呼叫 /api/market）
@@ -73,6 +82,7 @@ components/
   InstitutionalBadges.tsx / BollingerBadges.tsx  各種徽章
   SettingsClient.tsx / StockSearchInput.tsx / WatchlistTabs.tsx / ui/
 scripts/
+  migrate-to-multiuser.mjs                 一次性遷移腳本：把改版前的全域追蹤清單/訂閱/去重/設定資料搬到一個叫「Admin」的使用者底下（已對正式環境的 Redis 執行過）
   rebuild-directory.mjs                    重建全市場股票清單快取
   backfill-twse-prices.mjs                 全市場上市股股價回補（走證交所，免費）
   backfill-tpex-prices.mjs                 全市場上櫃股股價回補（走 FinMind）

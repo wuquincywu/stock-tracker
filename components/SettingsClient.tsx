@@ -25,6 +25,8 @@ export default function SettingsClient({
   const [chartMonths, setChartMonths] = useState(initialChartMonths);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<string | null>(null);
 
   function updateStreakThreshold(category: InstitutionalCategory, value: number) {
     setSaved(false);
@@ -63,6 +65,26 @@ export default function SettingsClient({
       setSaved(true);
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function testNotification() {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const res = await fetch("/api/notifications/test", { method: "POST" });
+      if (!res.ok) throw new Error();
+      const data = await res.json();
+      const triggered = data.crosses + data.levelAlerts + data.streakAlerts;
+      setTestResult(
+        data.testPushSent
+          ? "資料已更新，目前沒有觸發任何提醒，已送出測試推播"
+          : `資料已更新，觸發了 ${triggered} 項提醒並送出推播`,
+      );
+    } catch {
+      setTestResult("測試失敗，請稍後再試一次");
+    } finally {
+      setTesting(false);
     }
   }
 
@@ -169,6 +191,19 @@ export default function SettingsClient({
         </Button>
         {saved && <span className="text-sm text-emerald-400">已儲存</span>}
       </div>
+
+      <section>
+        <h2 className="mb-2 text-sm font-semibold text-zinc-300">測試通知</h2>
+        <p className="mb-3 text-xs text-zinc-500">
+          立即重新抓取追蹤股票的最新資料並檢查一次——真的觸發提醒就送出真實推播，沒有的話會送一則測試推播確認功能正常。
+        </p>
+        <div className="flex items-center gap-3">
+          <Button onClick={testNotification} disabled={testing}>
+            {testing ? "測試中…" : "測試通知"}
+          </Button>
+          {testResult && <span className="text-sm text-zinc-400">{testResult}</span>}
+        </div>
+      </section>
     </div>
   );
 }
