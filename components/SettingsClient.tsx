@@ -111,7 +111,8 @@ export default function SettingsClient({
       </section>
 
       <section>
-        <h2 className="mb-3 text-sm font-semibold text-zinc-300">股價站上／跌破均線時通知</h2>
+        <h2 className="mb-3 text-sm font-semibold text-zinc-300">股價站上／低於均線時通知</h2>
+        <p className="mb-2 text-xs text-zinc-500">只要條件持續成立，每個交易日都會再通知一次，不是只有剛穿越的那一天。</p>
         <div className="flex flex-col gap-2">
           {MA_LINE_ORDER.map((ma) => (
             <div
@@ -135,7 +136,7 @@ export default function SettingsClient({
                   onChange={() => toggleMaAlert(`${ma}:down`)}
                   className="h-4 w-4 accent-emerald-500"
                 />
-                <span className="text-sm">跌破</span>
+                <span className="text-sm">低於</span>
               </label>
             </div>
           ))}

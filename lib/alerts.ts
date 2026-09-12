@@ -1,5 +1,5 @@
 import { taipeiDateString } from "./date";
-import { classifyInstitutionalLevel, computeInstitutionalStreaks, detectCrosses } from "./indicators";
+import { classifyInstitutionalLevel, computeInstitutionalStreaks, latestMaSnapshot } from "./indicators";
 import { refreshInstitutionalSeries, refreshPriceSeries } from "./marketdata";
 import { broadcastPush } from "./push";
 import {
@@ -15,7 +15,7 @@ import {
   wasStreakAlerted,
 } from "./redis";
 import { INSTITUTIONAL_CATEGORY_LABEL, INSTITUTIONAL_CATEGORY_ORDER, INSTITUTIONAL_LEVEL_LABEL } from "./types";
-import type { CrossEvent, InstitutionalStreakSet, MaAlertKey, WatchlistEntry } from "./types";
+import type { CrossDirection, InstitutionalStreakSet, MaAlertKey, MaLine, MaSnapshot, WatchlistEntry } from "./types";
 
 const INSTITUTIONAL_HISTORY_DAYS = 40; // enough trading rows for a meaningful level baseline (min 20)
 const BATCH_SIZE = 5;
@@ -31,8 +31,9 @@ async function chunkedMap<T, R>(items: T[], size: number, fn: (item: T) => Promi
 
 interface StockCheckResult {
   code: string;
-  crosses: CrossEvent[];
-  todayDate: string | null;
+  priceDate: string | null;
+  maSnapshot: MaSnapshot[];
+  institutionalDate: string | null;
   level: ReturnType<typeof classifyInstitutionalLevel>;
   streaks: InstitutionalStreakSet;
 }
@@ -40,19 +41,27 @@ interface StockCheckResult {
 const EMPTY_STREAKS: InstitutionalStreakSet = { foreign: null, trust: null, dealer: null, combined: null };
 
 async function checkOne(entry: WatchlistEntry, maLines: number[], chartMonths: number): Promise<StockCheckResult> {
-  const empty: StockCheckResult = { code: entry.code, crosses: [], todayDate: null, level: null, streaks: EMPTY_STREAKS };
+  const empty: StockCheckResult = {
+    code: entry.code,
+    priceDate: null,
+    maSnapshot: [],
+    institutionalDate: null,
+    level: null,
+    streaks: EMPTY_STREAKS,
+  };
   try {
     const [prices, institutional] = await Promise.all([
       refreshPriceSeries(entry.code, entry.market, chartMonths),
       refreshInstitutionalSeries(entry.code, INSTITUTIONAL_HISTORY_DAYS),
     ]);
 
-    const crosses = prices.length >= 2 ? detectCrosses(entry.code, prices, maLines as (5 | 20 | 60)[]) : [];
-    const todayDate = institutional.length > 0 ? institutional[institutional.length - 1].date : null;
+    const priceDate = prices.length > 0 ? prices[prices.length - 1].date : null;
+    const maSnapshot = latestMaSnapshot(prices, maLines as MaLine[]);
+    const institutionalDate = institutional.length > 0 ? institutional[institutional.length - 1].date : null;
     const level = classifyInstitutionalLevel(institutional);
     const streaks = computeInstitutionalStreaks(institutional);
 
-    return { code: entry.code, crosses, todayDate, level, streaks };
+    return { code: entry.code, priceDate, maSnapshot, institutionalDate, level, streaks };
   } catch {
     return empty;
   }
@@ -103,10 +112,10 @@ export async function processUserAlerts(userId: string, maLines: number[]): Prom
   // Build each stock's notification message parts, applying per-alert-type dedup checks along the
   // way — but the actual dedup *mark* is deferred until after that stock's push has gone out (see
   // the loop below). Marking dedup up front and pushing after meant a crash/timeout between the
-  // two left the dedup key permanently set with no notification ever sent for that event, since
-  // MA-cross events don't repeat on a later day. Deferring the mark means a failed push simply
-  // gets retried on the next run (cron, or a manual re-run via the test button) instead of being
-  // silently and permanently swallowed.
+  // two left the dedup key permanently set with no notification ever sent for that event — and
+  // since dedup is keyed by date, that day's occurrence would never be retried once the date moves
+  // on. Deferring the mark means a failed push simply gets retried on the next run (cron, or a
+  // manual re-run via the test button) instead of being silently and permanently swallowed.
   const messagesByCode = new Map<string, string[]>();
   const pendingMarksByCode = new Map<string, Array<() => Promise<void>>>();
   let crossCount = 0;
@@ -124,20 +133,28 @@ export async function processUserAlerts(userId: string, maLines: number[]): Prom
   }
 
   for (const result of results) {
-    for (const event of result.crosses) {
-      const alertKey: MaAlertKey = `${event.ma}:${event.direction}`;
-      if (!alertConfig.maAlerts.includes(alertKey)) continue;
+    // MA alerts fire on current state (站上/低於), not just the crossing moment — re-evaluated
+    // every run, so as long as the condition still holds on a new trading day (a new priceDate),
+    // it fires again, the same way the level/streak checks below already behave. The per-day dedup
+    // key still blocks re-firing twice for the *same* priceDate.
+    if (result.priceDate) {
+      const priceDate = result.priceDate;
+      for (const snap of result.maSnapshot) {
+        const direction: CrossDirection = snap.above ? "up" : "down";
+        const alertKey: MaAlertKey = `${snap.ma}:${direction}`;
+        if (!alertConfig.maAlerts.includes(alertKey)) continue;
 
-      const already = await wasAlreadyAlerted(userId, event.code, event.ma, event.direction, event.date);
-      if (already) continue;
-      appendMessage(event.code, `${event.direction === "up" ? "站上" : "跌破"} ${MA_LABEL[event.ma]}`, () =>
-        markAlerted(userId, event.code, event.ma, event.direction, event.date),
-      );
-      crossCount++;
+        const already = await wasAlreadyAlerted(userId, result.code, snap.ma, direction, priceDate);
+        if (already) continue;
+        appendMessage(result.code, `${direction === "up" ? "站上" : "低於"} ${MA_LABEL[snap.ma]}`, () =>
+          markAlerted(userId, result.code, snap.ma, direction, priceDate),
+        );
+        crossCount++;
+      }
     }
 
-    if (!result.todayDate) continue;
-    const todayDate = result.todayDate;
+    if (!result.institutionalDate) continue;
+    const todayDate = result.institutionalDate;
 
     if (result.level && alertConfig.levels.includes(result.level)) {
       const level = result.level;

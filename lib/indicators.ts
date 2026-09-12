@@ -1,7 +1,6 @@
 import type {
   BollingerPoint,
   BollingerSignal,
-  CrossEvent,
   InstitutionalCategory,
   InstitutionalLevel,
   InstitutionalRow,
@@ -93,35 +92,6 @@ export function latestMaSnapshot(prices: PriceRow[], maLines: MaLine[]): MaSnaps
     snapshots.push({ ma, value, above: latestClose >= value });
   }
   return snapshots;
-}
-
-/**
- * Detect MA cross events between the last two rows of a chronologically-ascending price series.
- * Returns at most one event per requested MA line.
- */
-export function detectCrosses(code: string, prices: PriceRow[], maLines: MaLine[]): CrossEvent[] {
-  if (prices.length < 2) return [];
-  const closes = prices.map((p) => p.close);
-  const tIdx = prices.length - 1;
-  const prevIdx = tIdx - 1;
-  const events: CrossEvent[] = [];
-
-  for (const ma of maLines) {
-    const maPrev = sma(closes, ma, prevIdx);
-    const maT = sma(closes, ma, tIdx);
-    if (maPrev === null || maT === null) continue;
-
-    const closePrev = closes[prevIdx];
-    const closeT = closes[tIdx];
-
-    if (closePrev <= maPrev && closeT > maT) {
-      events.push({ code, ma, direction: "up", date: prices[tIdx].date, close: closeT, maValue: maT });
-    } else if (closePrev >= maPrev && closeT < maT) {
-      events.push({ code, ma, direction: "down", date: prices[tIdx].date, close: closeT, maValue: maT });
-    }
-  }
-
-  return events;
 }
 
 function combinedNet(row: InstitutionalRow): number {

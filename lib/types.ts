@@ -34,15 +34,6 @@ export const ALL_MA_ALERT_KEYS: MaAlertKey[] = MA_LINE_ORDER.flatMap((ma) =>
   (["up", "down"] as CrossDirection[]).map((direction) => `${ma}:${direction}` as MaAlertKey),
 );
 
-export interface CrossEvent {
-  code: string;
-  ma: MaLine;
-  direction: CrossDirection;
-  date: string;
-  close: number;
-  maValue: number;
-}
-
 export interface BollingerPoint {
   date: string;
   middle: number | null; // SMA20
