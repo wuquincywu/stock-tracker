@@ -1,170 +1,194 @@
-# 股票追蹤（stock-tracker）
+# stock-tracker
 
-台股（上市 TWSE ＋ 上櫃 TPEX）追蹤 PWA，給一個小群組（家人／朋友，不到 5 人）自己用。輸入股號追蹤股票後，可以看到股價、均線、布林通道、三大法人買賣超（拆分外資／投信／自營商）、連續買賣天數，並在股價站上／跌破均線、法人分級、連續買賣達標時收到瀏覽器推播通知。也有一個涵蓋全市場約 2,400 檔股票（含 ETF）的「所有股票」瀏覽頁，篩選方式跟已追蹤股票頁面一致。
+A Taiwan stock (TWSE listed + TPEX OTC) tracking PWA for a small trusted group (family/friends, under 5 people) — not a public product. Track stocks by code, see price/moving averages/Bollinger Bands, 三大法人 (foreign investors / investment trusts / dealers) net buy-sell with the per-category breakdown, and consecutive buy/sell streaks. Get browser push notifications when a stock crosses a moving average, its institutional flow hits a classification tier, or a buy/sell streak reaches a threshold. There's also an "All Stocks" browse page covering the whole market (~2,400 tickers including ETFs), using the same filters and card layout as the watchlist.
 
-不是要對外上架的產品，所以資料源全部走免費管道、沒有密碼機制——第一次打開網站選一個名字（或自己新增一個）就完成「登入」，之後這台裝置就記得你是誰。每個人的追蹤清單、推播訂閱、通知設定各自獨立；股票清單、股價／法人歷史、全市場卡片快取這些不因人而異的資料則全部共用。詳見下方「多使用者」。
+**Live**: https://stock-tracker-gray-beta.vercel.app
 
-## 功能
+No sign-up, no passwords — the first visit shows a "who are you" screen where you either pick an existing name or type a new one to join. That name is then remembered on the device via a cookie. Each person's watchlist, push subscription, and notification settings are fully independent; things that aren't personal (the stock directory, price/institutional history, the market-wide card cache) are shared by everyone. See "Multi-user model" below.
 
-### 已追蹤股票（首頁 `/`）
-- 輸入股號／中文名稱搜尋並加入追蹤（`components/StockSearchInput.tsx`）
-- 每檔卡片顯示：最新股價與漲跌幅、MA5／MA20／MA60 現在值與站上／低於、布林通道相對強弱徽章、三大法人等級（大賣～大買）、外資／投信／自營商／合計四種連續買賣天數徽章
-- 篩選面板：市場別、法人等級、連買賣（可選外資／投信／自營商／合計＋方向＋最少天數）、均線站上／低於（可選 MA5／20／60）
-- 篩選命中的那個徽章會加上琥珀色邊框，方便看出卡片為什麼符合篩選
+## Features
 
-### 所有股票（`/market`）
-- 全市場約 2,400 檔股票（TWSE＋TPEX，含 ETF，排除權證），卡片樣式跟已追蹤股票頁完全一致
-- 搜尋、市場別／法人等級／連買賣／均線篩選、依三大法人今日買賣超排序、標準頁碼分頁（一頁 50 檔）
-- 篩選／排序／分頁都在後端做（`/api/market`），瀏覽器不需要一次處理全部股票的資料
+### Watchlist (`/`)
+- Search by code or Chinese name and add to your watchlist (`components/StockSearchInput.tsx`, autocomplete dropdown)
+- Each card shows: latest price and % change, MA5/MA20/MA60 above/below state, Bollinger relative-strength badge, 三大法人 classification tier (big sell → big buy), and four streak badges (foreign / trust / dealer / combined consecutive buy or sell days)
+- Filter panel: market, institutional tier, streak (category + direction + minimum days), MA above/below (MA5/20/60)
+- The badge that matched an active filter gets an amber border so it's obvious why a card is showing
 
-### 個股頁（`/stock/[code]`）
-- 蠟燭圖＋MA20＋布林通道上下軌，圖表下方疊三大法人合計買賣超長條圖（買紅賣綠）
-- 布林通道 %b、Bandwidth、擠壓（squeeze）訊號徽章
-- 三大法人買賣超歷史表（外資／投信／自營商／合計四欄，近 10 日）
-- 圖表預設顯示 3 個月（純讀取，不即時抓資料），下方有 3／6／12／24 個月按鈕，選超過 3 個月才會即時抓取並存回 Redis（`components/StockChartSection.tsx`）
+### All Stocks (`/market`)
+- The whole market, ~2,400 tickers (TWSE + TPEX, ETFs included, warrants excluded), same card layout as the watchlist
+- Autocomplete search (same UX as the watchlist's search — type to see a dropdown of matches; picking one filters the list down to that stock), market/tier/streak/MA filters, sorted by stock code, standard pagination (50 per page)
+- Filtering/sorting/pagination all happen server-side (`/api/market`) — the browser never has to hold the full ~2,400-card dataset
 
-### 通知設定（`/settings`）
-- 法人買賣超分級（大賣～大買）通知開關
-- 外資／投信／自營商／合計，各自獨立設定連續買賣天數門檻（0 表示停用）
-- 股價站上／跌破 MA5／20／60，各自獨立開關
-- 股價圖表資料範圍（1～24 個月，各自獨立設定）——只影響自己在已追蹤股票頁卡片的計算範圍；所有股票頁是全體共用的快取，固定用預設月數，不會因人而異
+### Stock Detail (`/stock/[code]`)
+- Candlestick chart + MA20 + Bollinger upper/lower bands, with a combined 三大法人 net buy-sell bar chart underneath (red = buy, green = sell)
+- Bollinger %b, bandwidth, and squeeze signal badges
+- 三大法人 history table (foreign / trust / dealer / combined, last 10 days)
+- Chart defaults to 3 months and is read-only (no live fetch); buttons below it (`components/StockChartSection.tsx`) let you switch to 6/12/24 months — only requesting more than 3 months triggers a live fetch that also gets merged back into Redis
 
-### FAQ（`/faq`）
-所有指標／門檻的計算方式與依據，包含誠實說明「大買／大賣」的 z-score 門檻是自訂的、不是業界標準。
+### Notifications (`/notifications`)
+- Shows what triggered today, one entry per stock, each condition colored red (buy/above) or green (sell/below); an MA alert that's a genuine crossing moment (flipped from yesterday, not just still on the same side) gets an outline around it
+- Opening this page marks today as read, which clears the red dot on the "通知" tab and the PWA home-screen icon badge (`components/ClearAppBadge.tsx`)
+- The push notification itself is a lightweight "N stocks triggered today, tap for details" nudge — the actual detail always lives here, so it's visible even if the push never arrives (permission not granted, app closed, etc.)
 
-### 多使用者
-- 首次造訪沒有身分 cookie 時，`app/layout.tsx` 會擋下所有頁面、改顯示「你是誰」的名字選擇畫面（`components/UserPicker.tsx`）——可以選現有名字，也可以自己輸入新名字加入，沒有密碼
-- 選定後寫入裝置 cookie（一年有效），之後這台裝置都認得你；頁首有 `UserSwitcher.tsx` 可以切換身分
-- 已追蹤股票／所有股票的分頁按鈕上，若有還沒看過的推播通知會顯示提示點（`hasUnreadNotifications`）
+### Settings (`/settings`)
+- Toggle which 三大法人 tiers (big sell → big buy) trigger a notification
+- Independent streak-day thresholds for foreign / trust / dealer / combined (0 disables that category)
+- Independent toggles for MA5/20/60 above/below
+- Chart months (1–24) for your own watchlist card calculations — this is per-user; the All Stocks page uses a fixed shared value since its card cache isn't per-user
+- A "測試通知" (test notification) button: immediately re-runs the full check → notify pipeline for your own watchlist right now. A real qualifying alert gets pushed as usual; if nothing currently qualifies, a distinct confirmation push is sent instead, so pressing it always produces a visible result
 
-## 技術架構
+### FAQ (`/faq`)
+How every indicator/threshold is actually computed, including an honest note that the big-buy/big-sell z-score cutoffs are made up, not an industry standard.
 
-**框架**：Next.js 16（App Router + TypeScript，Turbopack），React 19，Tailwind CSS v4
-**資料庫**：Upstash Redis（`@upstash/redis`，REST 介面）
-**圖表**：`lightweight-charts`（TradingView）
-**推播**：Web Push（`web-push` 套件）＋手寫 Service Worker（`public/sw.js`）
+### Multi-user model
+- No identity cookie yet → `app/layout.tsx` blocks every page and renders a "who are you" picker (`components/UserPicker.tsx`) instead — pick an existing name or type a new one (no password)
+- Chosen name is written to a 1-year cookie; `components/UserSwitcher.tsx` in the header lets you switch identities
+- Per-user data: watchlist, push subscription, alert settings, notification history/read-state. Shared data: stock directory, price/institutional history, the market-cards cache, the MA-line config (never had a per-user UI to begin with)
+- `scripts/migrate-to-multiuser.mjs` was a one-time script (already run against production) that moved the pre-multi-user global watchlist/subscription/settings data to a user named "Admin"
+
+## Tech stack
+
+**Framework**: Next.js 16 (App Router + TypeScript, Turbopack), React 19, Tailwind CSS v4
+**Database**: Upstash Redis (`@upstash/redis`, REST interface)
+**Charts**: `lightweight-charts` (TradingView)
+**Push**: Web Push (`web-push` package) + a hand-written Service Worker (`public/sw.js`)
+**Hosting**: Vercel (Hobby plan)
 
 ```
 app/
-  layout.tsx                   根 layout；沒有使用者 cookie 時直接擋下所有子頁面，改渲染 UserPicker
-  actions.ts                    Server actions：selectUser／addUser／switchUser
-  page.tsx                     首頁（已追蹤股票）
-  market/page.tsx               所有股票瀏覽頁
-  stock/[code]/page.tsx         個股頁（唯讀，不即時抓資料）
-  settings/page.tsx             通知設定頁
+  layout.tsx                    Root layout — blocks all children behind UserPicker if no user cookie
+  actions.ts                    Server actions: selectUser / addUser / switchUser
+  page.tsx                      Watchlist (home)
+  market/page.tsx                All Stocks browse page
+  stock/[code]/page.tsx          Stock detail (read-only, never live-fetches)
+  notifications/page.tsx         Today's notification detail + read-state marking
+  settings/page.tsx              Notification settings + test-notification button
   faq/page.tsx
-  loading.tsx / */loading.tsx   各路由的載入骨架畫面（含 aria-live 無障礙標記）
+  loading.tsx / */loading.tsx    Per-route loading skeletons (with aria-live for screen readers)
   api/
-    watchlist/                 追蹤清單 CRUD
-    stock/[code]/               個股資料 API：預設唯讀，`?months=` 超過 3 個月才觸發即時抓取
-    stocks/search/              股票搜尋（新增追蹤用的自動完成）
-    market/                     所有股票頁的篩選／排序／分頁 API
-    settings/                   通知設定讀寫
-    push/subscribe|unsubscribe/ Web Push 訂閱管理
-    cron/check-alerts/          每日排程：檢查突破/分級/連買賣並推播（唯一會即時抓取追蹤股票資料的地方）
-    admin/backfill-market/      手動觸發全市場資料回補（見下方「資料回補」），有 CRON_SECRET 防護、依 Vercel Hobby 60 秒上限做時間預算控管
+    watchlist/                  Watchlist CRUD
+    stock/[code]/                Stock data API — read-only by default; `?months=` over 3 triggers a live fetch
+    stocks/search/               Stock search (autocomplete, used by both the watchlist and market pages)
+    market/                     Filter/sort/pagination API for the All Stocks page
+    settings/                   Read/write notification settings
+    notifications/test/          On-demand "測試通知" endpoint (Settings page button)
+    push/subscribe|unsubscribe/  Web Push subscription management
+    cron/check-alerts/           Daily schedule: live-refreshes every registered user's watchlist and notifies
+    admin/backfill-market/       Manual market-wide backfill trigger (see "Market-wide backfill" below); CRON_SECRET-protected, time-budgeted to Vercel Hobby's 60s cap
 lib/
-  types.ts                     所有共用型別（含 WatchlistCardData）
-  indicators.ts                均線、布林通道、法人分級、連買賣等純函式計算（`indicators.test.ts` 有對應 vitest 單元測試）
-  marketdata.ts                資料存取統一入口：依市場別＋來源優先序 dispatch、`getChartSeries`（暖身緩衝＋布林通道計算）、全市場卡片快取、回補邏輯（全市場資料不分使用者，共用）
-  httpFetch.ts                 共用的 fetch 重試/退避包裝，TWSE／TPEX／FinMind 三個 client 都透過這層打外部 API
-  twse.ts / tpex.ts / finmind.ts  三個資料源各自的 API client
-  redis.ts                     所有 Redis 讀寫；個人資料相關函式（追蹤清單、推播訂閱、通知設定、去重歷史）第一個參數都是 `userId`，全市場資料（股票清單、歷史、卡片快取）維持不分使用者
-  users.ts                     目前裝置的使用者身分查詢（讀 cookie＋比對 Redis 使用者名單，`cache()` 包一層讓同一個 request 內共用一次查詢結果）
-  push.ts                      web-push 包裝（`broadcastPush(userId, payload)`，只送給該使用者自己的訂閱）
+  types.ts                      Shared types (including WatchlistCardData, NotificationPart)
+  indicators.ts                 Pure functions: MA, Bollinger, institutional tier, streaks (unit-tested in indicators.test.ts)
+  alerts.ts                     processUserAlerts — the check→notify pipeline shared by the cron and the test-notification endpoint
+  marketdata.ts                 Data access entry point: per-market source dispatch, getChartSeries (warm-up buffer + Bollinger calc), market-cards cache, market-wide backfill (all shared, not per-user)
+  httpFetch.ts                  Shared fetch-with-retry/backoff wrapper — every TWSE/TPEX/FinMind call goes through this
+  twse.ts / tpex.ts / finmind.ts  Per-source API clients
+  redis.ts                      All Redis reads/writes. Per-user functions (watchlist, push subscription, alert settings, notification history) take a userId as their first argument; market-wide data (stock directory, history, card cache) doesn't
+  users.ts                      Current-device identity lookup (cookie + registry check), wrapped in React's cache() so one request only pays for one lookup
+  date.ts                       taipeiDateString() — Taiwan has no DST, so a fixed +8h offset is enough to get the local calendar date without a timezone library
+  push.ts                       web-push wrapper (broadcastPush(userId, payload) — only sends to that user's own subscriptions)
 components/
-  UserPicker.tsx / UserSwitcher.tsx  「你是誰」名字選擇畫面／頁首切換身分
-  WatchlistCard.tsx            已追蹤股票／所有股票共用的股票卡片
-  WatchlistClient.tsx           已追蹤股票頁的篩選＋清單邏輯
-  MarketOverviewClient.tsx      所有股票頁的篩選＋分頁邏輯（呼叫 /api/market）
-  StockChartSection.tsx         個股頁圖表＋月份區間按鈕（唯讀預設，選更長區間才即時抓取）
-  BollingerChart.tsx            蠟燭圖＋均線＋布林通道＋法人長條圖
-  InstitutionalBadges.tsx / BollingerBadges.tsx  各種徽章
+  UserPicker.tsx / UserSwitcher.tsx  "Who are you" picker / header identity switcher
+  WatchlistCard.tsx              Shared stock card (watchlist + market page)
+  WatchlistClient.tsx             Watchlist page's filter + list logic
+  MarketOverviewClient.tsx        Market page's filter + search + pagination logic (calls /api/market)
+  StockChartSection.tsx           Stock detail page's chart + month-range buttons
+  ClearAppBadge.tsx               Clears the PWA app-icon badge when the notifications page opens
+  BollingerChart.tsx              Candlestick + MA + Bollinger + institutional bar chart
+  InstitutionalBadges.tsx / BollingerBadges.tsx  Various badges
   SettingsClient.tsx / StockSearchInput.tsx / WatchlistTabs.tsx / ui/
 scripts/
-  migrate-to-multiuser.mjs                 一次性遷移腳本：把改版前的全域追蹤清單/訂閱/去重/設定資料搬到一個叫「Admin」的使用者底下（已對正式環境的 Redis 執行過）
-  rebuild-directory.mjs                    重建全市場股票清單快取
-  backfill-twse-prices.mjs                 全市場上市股股價回補（走證交所，免費）
-  backfill-tpex-prices.mjs                 全市場上櫃股股價回補（走 FinMind）
-  backfill-institutional-breakdown.mjs     （已淘汰）原本用 FinMind 逐股回補三大法人拆分；T86／櫃買日報表被發現本來就有完整拆分後，這支腳本不再需要，全市場法人拆分改由 `backfillMarketInstitutional`（`lib/marketdata.ts`）用免費來源一次處理，幾十秒內完成
+  migrate-to-multiuser.mjs                 One-time migration to the "Admin" user (already run against production)
+  rebuild-directory.mjs                    Rebuild the market-wide stock directory cache
+  backfill-twse-prices.mjs                 Backfill all TWSE stock prices (free, official source)
+  backfill-tpex-prices.mjs                 Backfill all TPEX stock prices (via FinMind)
+  backfill-institutional-breakdown.mjs     Obsolete — see "Data source strategy" below
 ```
 
-## 資料源策略
+## Data source strategy
 
-三個外部資料源，各有取捨，`lib/marketdata.ts` 統一決定用哪個：
+Three external sources, `lib/marketdata.ts` decides which to use for what:
 
-| 資料 | 主要來源 | 備援 | 備註 |
+| Data | Primary source | Fallback | Notes |
 |---|---|---|---|
-| 上市股價 | 證交所 `STOCK_DAY`（免費、無限制、無 token） | FinMind | 只有上市股票有這個免費單股歷史端點 |
-| 上櫃股價 | FinMind `TaiwanStockPrice` | — | 櫃買中心沒有免費的單股歷史端點 |
-| 三大法人（追蹤股票，走 cron 即時更新） | FinMind `TaiwanStockInstitutionalInvestorsBuySell` | — | 拆分外資/投信/自營商，只給少量追蹤股票用，量小不受限流影響 |
-| 三大法人（全市場回補） | 證交所 T86 ＋ 櫃買中心日報表（免費、全市場一次撈） | — | 一開始誤以為這兩個來源只給合計數字，後來發現其實**本來就有完整的外資/投信/自營商拆分**，只是程式一開始只讀了合計那一欄——修正後全市場法人拆分回補完全免費、幾十秒內做完，不再需要 FinMind |
-| 股票清單（代碼/名稱/市場別） | 證交所＋櫃買中心「當日行情」報表（免費） | FinMind `TaiwanStockInfo` | 改用這個是因為 FinMind 的全清單端點被限流得比單股查詢嚴重很多；證交所的報表天生不含權證，櫃買中心的則用代碼規則（4 碼數字或 00 開頭）過濾掉權證 |
+| TWSE stock prices | TWSE `STOCK_DAY` (free, unlimited, no token) | FinMind | Only TWSE has a free per-stock history endpoint |
+| TPEX stock prices | FinMind `TaiwanStockPrice` | — | TPEX has no free per-stock history endpoint |
+| 三大法人 for tracked stocks (daily cron refresh) | FinMind `TaiwanStockInstitutionalInvestorsBuySell` | — | Small volume (just the watchlist), not rate-limit sensitive |
+| 三大法人 for the whole market (backfill) | TWSE T86 + TPEX daily report (free, whole-market-per-call) | — | Originally assumed these only gave a combined total — turned out they **already carry the full foreign/trust/dealer split**, just in columns the code wasn't reading. Fixing that made market-wide backfill free and fast (tens of seconds for the whole market), retiring the FinMind-based script below |
+| Stock directory (code/name/market) | TWSE + TPEX daily-quotes reports (free) | FinMind `TaiwanStockInfo` | FinMind's bulk list endpoint turned out to be rate-limited more aggressively than its per-stock endpoints; the official reports naturally exclude (TWSE) or can be filtered out (TPEX, by code pattern) warrants |
 
-**FinMind 免費額度的實際行為**：官方說法是 300 req/hr（有 token 600 req/hr），但實測是一個「一次燒完、約 1～2 分鐘回充」的小額度桶，不是乾淨的每小時額度視窗。`backfill-tpex-prices.mjs`（現在唯一還大量依賴 FinMind 的回補腳本）用短暫、遞增的等待（20 秒起跳、上限 5 分鐘）搭配即時倒數畫面來應對，而不是傻等一小時。所有對外部 API 的呼叫（TWSE／TPEX／FinMind）都經過 `lib/httpFetch.ts` 的共用重試/退避包裝。
+**FinMind's real free-tier behavior**: officially 300 req/hr (600 with a token), but in practice it's a small bucket that burns through fast and refills over roughly 1–2 minutes — not a clean hourly window. `backfill-tpex-prices.mjs` (the only backfill script still heavily dependent on FinMind) handles this with short, increasing waits (starting at 20s, capped at 5 minutes) and a live countdown, instead of blindly waiting an hour. Every external call (TWSE/TPEX/FinMind) goes through `lib/httpFetch.ts`'s shared retry/backoff wrapper.
 
-**證交所 WAF**：對突發的大量請求會直接封鎖（403 或其他非預期狀態碼），且封鎖後就算放慢速度也可能持續一段時間。`backfill-twse-prices.mjs` 用序列化、逐股逐月、每秒 1 次請求的保守步調，並把任何非預期回應都當成限流訊號來重試，而不是直接判定該股票失敗放棄。
+**TWSE's WAF**: blocks bursty traffic outright (403 or other unexpected status codes), and the block can persist for a while even after slowing down. `backfill-twse-prices.mjs` paces itself conservatively (serial, one stock-month per second) and treats any unexpected response as a rate-limit signal to retry rather than giving up on that stock.
 
-## 執行邏輯
+## Runtime logic
 
-### 個股資料存取：讀取跟即時抓取是分開的兩套函式
-`lib/marketdata.ts` 把「讀」跟「即時抓取＋回補」拆成兩組函式，避免使用者單純瀏覽頁面就默默觸發外部 API 呼叫：
+### Reading vs. live-fetching are separate function pairs
+`lib/marketdata.ts` splits "read" from "live-fetch + backfill" so that just browsing a page never silently triggers an external API call:
 
-- `getPriceSeries` / `getInstitutionalSeries`：**唯讀**，只讀 Redis 裡已經存好的歷史（`history:price:{code}` / `history:institutional:{code}`），絕不即時抓取。首頁、個股頁、`/api/stock/[code]` 都是用這組。
-- `refreshPriceSeries` / `refreshInstitutionalSeries`：即時抓取＋合併回 Redis（合併時用日期當 key，新資料蓋掉同日期舊資料，最多保留 400 天）。**只有 `/api/cron/check-alerts` 會呼叫**，也就是說整個網站唯一會為了追蹤股票默默打外部 API 的地方就是每日排程。
-- `getChartSeries`：個股頁圖表專用，內部多抓幾個月當「暖身緩衝」再算布林通道／MA（布林通道需要 20 天、MA60 需要 60 天暖身期，不然圖表前段會沒有指標線），依參數決定要唯讀還是即時刷新。
+- `getPriceSeries` / `getInstitutionalSeries` — **read-only**, only reads what's already stored in Redis (`history:price:{code}` / `history:institutional:{code}`), never live-fetches. Used by the watchlist, stock detail page, and `/api/stock/[code]`.
+- `refreshPriceSeries` / `refreshInstitutionalSeries` — live-fetches and merges the result back into Redis (merged by date key, new data overwrites same-date old data, capped at 400 days kept). **Only called from `lib/alerts.ts`'s `processUserAlerts`**, which itself is only invoked by the daily cron and the Settings page's test-notification button — i.e. the only two places the app ever live-fetches a tracked stock's data.
+- `getChartSeries` — used by the stock detail chart: fetches a few extra months as warm-up (Bollinger needs 20 days, MA60 needs 60) before computing indicators, then trims back to the requested window; a `live` flag picks read-only vs. live-refresh.
 
-個股頁圖表預設顯示最近 3 個月、純讀取；使用者按 6／12／24 個月按鈕才會呼叫 `/api/stock/[code]?months=`，由這支 API 判斷是否需要即時抓取更早的資料並存回 Redis。
+The stock detail chart defaults to the most recent 3 months, read-only; picking a wider range via its own buttons calls `/api/stock/[code]?months=`, which decides whether that specific request needs a live fetch.
 
-### 所有股票頁（`getAllMarketCards`）
-不對全市場約 2,400 檔股票做即時抓取，而是：
-1. 用 Redis MGET 批次一次讀出所有股票已經存好的價格／法人歷史（而不是一檔一檔查）
-2. 組出來的完整卡片陣列快取在 Redis（`cache:marketCards`），並用 single-flight 機制避免多個請求同時撞上快取過期而重複做同一份昂貴運算
-3. `/api/market` 對快取後的資料做篩選／排序／分頁，只回傳當前頁的 50 筆給瀏覽器——不會把全部資料一次丟給前端
+### Alert logic: re-evaluated every run, no "already notified" guard
+`lib/alerts.ts`'s `processUserAlerts(userId, maLines)` is the whole check → notify pipeline, shared by the daily cron (looped over every registered user) and the Settings page's on-demand test button (just the current user):
 
-### 推播通知（`/api/cron/check-alerts`）
-Vercel Cron 每個交易日觸發一次（`vercel.json`，UTC 12:15 = 台北 20:15，抓法人資料公布後留緩衝時間），需要 `CRON_SECRET`：
-1. 對每檔追蹤股票平行（分批）用 `refreshPriceSeries`／`refreshInstitutionalSeries` 抓最新價格與法人資料
-2. 比對 MA 穿越、法人分級、四種連續買賣天數是否達到使用者設定的門檻
-3. 每一種都有各自的當日去重（Redis `alert:dedup`），去重標記**在推播真的送出成功之後才寫入**（避免半路失敗時把這次警示永久吃掉、之後都不會再通知）
-4. 同一檔股票當天多個觸發條件會合併成一則通知一起送出
-5. 推播失敗（訂閱已失效）的裝置會自動從訂閱清單移除
+- **MA alerts** fire on current state (above/below), not just the moment of crossing — comparing today's snapshot against yesterday's tells whether it's a genuine crossing moment (flipped) or just persisting on the same side; either way it notifies, but only a genuine flip gets the outline highlight on the notifications page.
+- **Institutional-tier and streak alerts** fire whenever the current tier/streak matches an enabled setting.
+- **No dedup** — every run re-evaluates the truth and reports whatever currently qualifies, even if the exact same thing was already reported earlier that day. The daily cron only runs once a day anyway, and the whole point of the test button is to show live state on every press, not be silently suppressed by an earlier check.
+- The push notification is a lightweight nudge; the actual per-stock detail is written to `notifications:{userId}:{date}` in Redis for the `/notifications` page to show.
 
-### 全市場資料回補
-這是手動觸發、非日常運作的維護工作，不是每天自動跑的東西：
-- `POST /api/admin/backfill-market`（需要 `CRON_SECRET`）：回補全市場三大法人（含外資/投信/自營商拆分，免費來源，一次呼叫幾十秒內完成）＋全部上市股股價（免費來源）。依 Vercel Hobby 60 秒執行上限做時間預算控管，跑不完會回傳 `completed: false`，重新呼叫即可從中斷處繼續。
-- `node --env-file=.env.local scripts/backfill-twse-prices.mjs`：回補全部上市股股價（走證交所，免費，但要小心 WAF——見上方「證交所 WAF」）
-- `node --env-file=.env.local scripts/backfill-tpex-prices.mjs`：回補全部上櫃股股價（走 FinMind，量大，跑起來要一段時間）
+### All Stocks page (`getAllMarketCards`)
+Never live-fetches for the ~2,400-stock overview. Instead:
+1. Batch-reads everyone's already-stored price/institutional history via Redis `MGET` (not one round-trip per stock)
+2. The assembled card array is cached in Redis (`cache:marketCards`), with a single-flight guard so concurrent requests don't all rebuild it at once when the cache expires
+3. `/api/market` filters/sorts/paginates the cached data and returns only the current page (50 cards) to the browser
 
-兩支股價回補腳本都設計成可以安全重跑：已經回補過的股票會被跳過（用各自的完成標記判斷），不會每次都重新整個清單抓一遍。
+### Push notifications (`/api/cron/check-alerts`)
+Vercel Cron fires once per trading day (`vercel.json`, UTC 12:15 = Taipei 20:15, leaving buffer after institutional data is published), requires `CRON_SECRET`:
+1. Loops over every registered user **sequentially** (not in parallel — parallelizing would multiply concurrent load on TWSE/FinMind)
+2. For each user, runs `processUserAlerts` over their watchlist and sends one bundled push if anything qualifies
 
-## 環境變數
+### On-demand test notification (`/api/notifications/test`)
+Same `processUserAlerts` pipeline, but immediate and scoped to just the currently logged-in user — used by the Settings page's "測試通知" button.
 
-參考 `.env.local.example`：
+### Market-wide backfill
+Manual, occasional maintenance — not something that runs automatically every day:
+- `POST /api/admin/backfill-market` (needs `CRON_SECRET`): backfills market-wide 三大法人 (free source, full split, done in well under a minute) + all TWSE stock prices (free source). Time-budgeted to Vercel Hobby's 60s limit; if it can't finish in time it returns `completed: false` and can simply be called again to continue.
+- `node --env-file=.env.local scripts/backfill-twse-prices.mjs`: backfills all TWSE prices (free, official source — mind the WAF, see above)
+- `node --env-file=.env.local scripts/backfill-tpex-prices.mjs`: backfills all TPEX prices (via FinMind, slow — mind the quota bucket)
 
-| 變數 | 用途 |
+Both price-backfill scripts are safe to re-run: already-backfilled stocks are skipped (tracked via their own completion markers), not re-fetched from scratch every time.
+
+## Environment variables
+
+See `.env.local.example`:
+
+| Variable | Purpose |
 |---|---|
-| `FINMIND_TOKEN` | FinMind 註冊 token，可選；有的話額度上看 600/hr（實測仍是小額度桶模式，不是乾淨的每小時視窗） |
-| `VAPID_PUBLIC_KEY` / `NEXT_PUBLIC_VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT` | Web Push，用 `npx web-push generate-vapid-keys` 產生 |
-| `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | Upstash Redis，部署到 Vercel 時透過 Marketplace 整合會自動注入 |
-| `CRON_SECRET` | 保護 `/api/cron/check-alerts` 與 `/api/admin/backfill-market`，Vercel Cron 會用 `Authorization: Bearer <值>` 呼叫 |
+| `FINMIND_TOKEN` | Optional FinMind registration token; raises the free-tier ceiling to 600/hr (still a bursty bucket in practice, not a clean hourly window) |
+| `VAPID_PUBLIC_KEY` / `NEXT_PUBLIC_VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT` | Web Push keys, generate with `npx web-push generate-vapid-keys` |
+| `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | Upstash Redis — auto-injected when deployed via the Vercel Marketplace integration |
+| `CRON_SECRET` | Protects `/api/cron/check-alerts` and `/api/admin/backfill-market`; Vercel Cron calls with `Authorization: Bearer <value>` |
 
-## 本機開發
+## Local development
 
 ```bash
 npm install
 npm run dev        # http://localhost:3000
 npm run lint
 npm run typecheck  # tsc --noEmit
-npx vitest run     # lib/indicators.ts 的單元測試
-npm run build && npm run start   # production 模式
+npx vitest run     # unit tests for lib/indicators.ts
+npm run build && npm run start   # production mode
 ```
 
-**重要）本機開發環境的已知問題**：在目前這台機器上，`npm run dev`（不論 Turbopack 或 `--webpack`）的 Fast Refresh WebSocket 連不上，而且一旦連不上，React 會完全沒有掛載互動功能——不是熱重載失效這麼單純，而是整個網站在 dev 模式下所有按鈕、輸入框、篩選都會「看起來正常、點了沒反應」。這不是 app 程式碼的問題：`npm run build && npm run start`（production 模式）互動完全正常。**要測試任何點擊／輸入類的功能，一定要用 production 模式**，dev 模式只能拿來看畫面版型，不能拿來判斷功能是否正常。
+**Known issue on this machine**: `npm run dev` (Turbopack or `--webpack`) can't establish its Fast Refresh WebSocket, and when that happens React never hydrates at all — not just "no hot reload," but every button/input/filter on the whole site looks correct in the static HTML and does nothing when clicked. This is not an app bug: `npm run build && npm run start` (production mode) works correctly. **Always verify interactive features (clicks, typing, filters) in production mode** — dev mode is only reliable for checking layout, not for confirming a feature actually works.
 
-## 部署
+## Deployment
 
-目標平台是 Vercel 免費方案：
-- Redis 用 Vercel Marketplace 的 Upstash 整合（自動注入環境變數）
-- Cron 用 `vercel.json` 裡設定的排程（Hobby 方案一天只能排一次，所以推播抓取時間點是抓「法人資料公布後」的固定時間，不是盯盤即時通知）
-- 目前**尚未實際部署過**，所有驗證都是在本機 + 真實的 Upstash 資料庫上做的
+Deployed on Vercel's free (Hobby) plan, live at https://stock-tracker-gray-beta.vercel.app:
+- Redis via the Vercel Marketplace Upstash integration (env vars auto-injected)
+- Git-connected to this GitHub repository — pushing to `master` auto-deploys
+- Cron scheduled via `vercel.json` (Hobby allows once per day, hence the fixed "after institutional data is published" trigger time rather than real-time market watching)
+- `app/api/admin/backfill-market/route.ts`'s `maxDuration` is capped at Hobby's hard 60-second limit; both backfill calls it makes are time-budgeted and safely resumable rather than assuming they'll finish in one invocation
