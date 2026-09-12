@@ -3,7 +3,6 @@ import { taipeiDateString } from "./date";
 import type { StockDirectoryEntry } from "./finmind";
 import type {
   AlertConfig,
-  CrossDirection,
   InstitutionalCategory,
   InstitutionalLevel,
   InstitutionalRow,
@@ -12,7 +11,6 @@ import type {
   NotificationPart,
   PriceRow,
   PushSubscriptionRecord,
-  StreakDirection,
   WatchlistCardData,
   WatchlistEntry,
 } from "./types";
@@ -107,59 +105,6 @@ export async function removeSubscription(userId: string, endpoint: string): Prom
   await redis.hdel(subscriptionsKey(userId), endpoint);
 }
 
-function dedupKey(userId: string): string {
-  return `alert:dedup:${userId}`;
-}
-
-/** Generic once-per-trading-day dedup: has `key` already been alerted for `date`? */
-async function wasKeyAlerted(userId: string, key: string, date: string): Promise<boolean> {
-  const last = await redis.hget<string>(dedupKey(userId), key);
-  return last === date;
-}
-
-async function markKeyAlerted(userId: string, key: string, date: string): Promise<void> {
-  await redis.hset(dedupKey(userId), { [key]: date });
-}
-
-function maKey(code: string, ma: MaLine, direction: CrossDirection): string {
-  return `${code}:ma:${ma}:${direction}`;
-}
-
-export const wasAlreadyAlerted = (userId: string, code: string, ma: MaLine, direction: CrossDirection, date: string) =>
-  wasKeyAlerted(userId, maKey(code, ma, direction), date);
-
-export const markAlerted = (userId: string, code: string, ma: MaLine, direction: CrossDirection, date: string) =>
-  markKeyAlerted(userId, maKey(code, ma, direction), date);
-
-function levelKey(code: string, level: InstitutionalLevel): string {
-  return `${code}:level:${level}`;
-}
-
-export const wasLevelAlerted = (userId: string, code: string, level: InstitutionalLevel, date: string) =>
-  wasKeyAlerted(userId, levelKey(code, level), date);
-
-export const markLevelAlerted = (userId: string, code: string, level: InstitutionalLevel, date: string) =>
-  markKeyAlerted(userId, levelKey(code, level), date);
-
-function streakKey(code: string, category: InstitutionalCategory, direction: StreakDirection): string {
-  return `${code}:streak:${category}:${direction}`;
-}
-
-export const wasStreakAlerted = (
-  userId: string,
-  code: string,
-  category: InstitutionalCategory,
-  direction: StreakDirection,
-  date: string,
-) => wasKeyAlerted(userId, streakKey(code, category, direction), date);
-
-export const markStreakAlerted = (
-  userId: string,
-  code: string,
-  category: InstitutionalCategory,
-  direction: StreakDirection,
-  date: string,
-) => markKeyAlerted(userId, streakKey(code, category, direction), date);
 
 export async function getMaLines(): Promise<MaLine[]> {
   const raw = await redis.get<string>(KEYS.maLines);

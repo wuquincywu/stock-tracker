@@ -2,18 +2,7 @@ import { taipeiDateString } from "./date";
 import { classifyInstitutionalLevel, computeInstitutionalStreaks, latestMaSnapshot } from "./indicators";
 import { refreshInstitutionalSeries, refreshPriceSeries } from "./marketdata";
 import { broadcastPush } from "./push";
-import {
-  getAlertConfig,
-  getChartMonths,
-  getWatchlist,
-  markAlerted,
-  markLevelAlerted,
-  markStreakAlerted,
-  setDailyNotifications,
-  wasAlreadyAlerted,
-  wasLevelAlerted,
-  wasStreakAlerted,
-} from "./redis";
+import { getAlertConfig, getChartMonths, getWatchlist, setDailyNotifications } from "./redis";
 import { INSTITUTIONAL_CATEGORY_LABEL, INSTITUTIONAL_CATEGORY_ORDER, INSTITUTIONAL_LEVEL_LABEL } from "./types";
 import type {
   CrossDirection,
@@ -106,12 +95,18 @@ export const EMPTY_ALERT_SUMMARY: UserAlertSummary = {
 /**
  * Runs the full check → notify pipeline for one user's watchlist: live-refreshes each tracked
  * stock's price/institutional data, evaluates it against this user's own alert thresholds, and —
- * if anything newly qualifies — writes today's notification record and sends one bundled push.
- * Used by both the daily cron (app/api/cron/check-alerts/route.ts, looped over every registered
- * user) and the Settings page's on-demand "測試通知" button (app/api/notifications/test/route.ts,
- * for just the current user). `maLines` is shared app-wide config (not user-configurable);
- * everything else here (watchlist, alert thresholds, chart-months, dedup, notification history,
- * push subscriptions) is this user's own.
+ * if anything currently qualifies — writes today's notification record and sends one bundled
+ * push. Used by both the daily cron (app/api/cron/check-alerts/route.ts, looped over every
+ * registered user) and the Settings page's on-demand "測試通知" button
+ * (app/api/notifications/test/route.ts, for just the current user).
+ *
+ * No dedup: every call re-evaluates current truth and notifies about everything that qualifies
+ * right now, even if an identical condition was already reported earlier the same day — the daily
+ * cron only runs once a day anyway, and the whole point of the test button is to show current
+ * state on demand, every time it's pressed, not to be silently suppressed by an earlier check.
+ *
+ * `maLines` is shared app-wide config (not user-configurable); everything else here (watchlist,
+ * alert thresholds, chart-months, notification history, push subscriptions) is this user's own.
  */
 export async function processUserAlerts(userId: string, maLines: number[]): Promise<UserAlertSummary> {
   const [watchlist, alertConfig, chartMonths] = await Promise.all([
@@ -123,71 +118,41 @@ export async function processUserAlerts(userId: string, maLines: number[]): Prom
 
   const results = await chunkedMap(watchlist, BATCH_SIZE, (entry) => checkOne(entry, maLines, chartMonths));
 
-  // Build each stock's notification message parts, applying per-alert-type dedup checks along the
-  // way — but the actual dedup *mark* is deferred until after that stock's push has gone out (see
-  // the loop below). Marking dedup up front and pushing after meant a crash/timeout between the
-  // two left the dedup key permanently set with no notification ever sent for that event — and
-  // since dedup is keyed by date, that day's occurrence would never be retried once the date moves
-  // on. Deferring the mark means a failed push simply gets retried on the next run (cron, or a
-  // manual re-run via the test button) instead of being silently and permanently swallowed.
   const messagesByCode = new Map<string, NotificationPart[]>();
-  const pendingMarksByCode = new Map<string, Array<() => Promise<void>>>();
   let crossCount = 0;
   let levelAlertCount = 0;
   let streakAlertCount = 0;
 
-  function appendMessage(code: string, text: string, mark: () => Promise<void>, isCrossMoment = false) {
+  function appendMessage(code: string, text: string, isCrossMoment = false) {
     const parts = messagesByCode.get(code) ?? [];
     parts.push({ text, isCrossMoment });
     messagesByCode.set(code, parts);
-
-    const marks = pendingMarksByCode.get(code) ?? [];
-    marks.push(mark);
-    pendingMarksByCode.set(code, marks);
   }
 
   for (const result of results) {
-    // MA alerts fire on current state (站上/低於), not just the crossing moment — re-evaluated
-    // every run, so as long as the condition still holds on a new trading day (a new priceDate),
-    // it fires again, the same way the level/streak checks below already behave. The per-day dedup
-    // key still blocks re-firing twice for the *same* priceDate. Separately, comparing against
-    // yesterday's snapshot (prevMaSnapshot) tells a genuine crossing moment (side flipped) from
-    // just persisting on the same side — surfaced as `isCrossMoment` for the 通知 page's outline.
+    // MA alerts fire on current state (站上/低於), not just the crossing moment — comparing
+    // against yesterday's snapshot (prevMaSnapshot) tells a genuine crossing moment (side flipped)
+    // from just persisting on the same side, surfaced as `isCrossMoment` for the 通知 page's
+    // outline, but both cases notify.
     if (result.priceDate) {
-      const priceDate = result.priceDate;
       for (const snap of result.maSnapshot) {
         const direction: CrossDirection = snap.above ? "up" : "down";
         const alertKey: MaAlertKey = `${snap.ma}:${direction}`;
         if (!alertConfig.maAlerts.includes(alertKey)) continue;
 
-        const already = await wasAlreadyAlerted(userId, result.code, snap.ma, direction, priceDate);
-        if (already) continue;
-
         const prevSnap = result.prevMaSnapshot.find((p) => p.ma === snap.ma);
         const isCrossMoment = prevSnap ? prevSnap.above !== snap.above : false;
 
-        appendMessage(
-          result.code,
-          `${direction === "up" ? "站上" : "低於"} ${MA_LABEL[snap.ma]}`,
-          () => markAlerted(userId, result.code, snap.ma, direction, priceDate),
-          isCrossMoment,
-        );
+        appendMessage(result.code, `${direction === "up" ? "站上" : "低於"} ${MA_LABEL[snap.ma]}`, isCrossMoment);
         crossCount++;
       }
     }
 
     if (!result.institutionalDate) continue;
-    const todayDate = result.institutionalDate;
 
     if (result.level && alertConfig.levels.includes(result.level)) {
-      const level = result.level;
-      const already = await wasLevelAlerted(userId, result.code, level, todayDate);
-      if (!already) {
-        appendMessage(result.code, `法人${INSTITUTIONAL_LEVEL_LABEL[level]}`, () =>
-          markLevelAlerted(userId, result.code, level, todayDate),
-        );
-        levelAlertCount++;
-      }
+      appendMessage(result.code, `法人${INSTITUTIONAL_LEVEL_LABEL[result.level]}`);
+      levelAlertCount++;
     }
 
     for (const category of INSTITUTIONAL_CATEGORY_ORDER) {
@@ -195,15 +160,11 @@ export async function processUserAlerts(userId: string, maLines: number[]): Prom
       const streak = result.streaks[category];
       if (threshold <= 0 || !streak || streak.length < threshold) continue;
 
-      const already = await wasStreakAlerted(userId, result.code, category, streak.direction, todayDate);
-      if (!already) {
-        appendMessage(
-          result.code,
-          `${INSTITUTIONAL_CATEGORY_LABEL[category]}連${streak.length}${streak.direction === "buy" ? "買" : "賣"}`,
-          () => markStreakAlerted(userId, result.code, category, streak.direction, todayDate),
-        );
-        streakAlertCount++;
-      }
+      appendMessage(
+        result.code,
+        `${INSTITUTIONAL_CATEGORY_LABEL[category]}連${streak.length}${streak.direction === "buy" ? "買" : "賣"}`,
+      );
+      streakAlertCount++;
     }
   }
 
@@ -234,11 +195,8 @@ export async function processUserAlerts(userId: string, maLines: number[]): Prom
       sent = result.sent;
       pruned = result.pruned;
       failed = result.failed;
-
-      const allMarks = [...pendingMarksByCode.values()].flat();
-      await Promise.all(allMarks.map((mark) => mark()));
     } catch (err) {
-      console.error(`[processUserAlerts] combined push failed for user ${userId}, leaving dedup unmarked for retry:`, err);
+      console.error(`[processUserAlerts] combined push failed for user ${userId}:`, err);
     }
   }
 
