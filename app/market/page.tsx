@@ -7,13 +7,6 @@ import type { WatchlistCardData } from "@/lib/types";
 
 const PAGE_SIZE = 50;
 
-function netOf(card: WatchlistCardData): number {
-  if (!card.latestInstitutional) return 0;
-  return (
-    card.latestInstitutional.foreignNet + card.latestInstitutional.investmentTrustNet + card.latestInstitutional.dealerNet
-  );
-}
-
 export default async function MarketPage() {
   const currentUser = await getCurrentUser();
   if (!currentUser) return null; // layout renders the "who are you" picker instead
@@ -30,7 +23,7 @@ export default async function MarketPage() {
       hasUnreadNotifications(currentUser),
     ]);
     trackedCodes = watchlist.map((w) => w.code);
-    const sorted = [...allCards].sort((a, b) => netOf(b) - netOf(a));
+    const sorted = [...allCards].sort((a, b) => a.code.localeCompare(b.code));
     initialTotal = sorted.length;
     initialCards = sorted.slice(0, PAGE_SIZE);
     unread = unreadResult;

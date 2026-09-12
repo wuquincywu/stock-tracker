@@ -1,17 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAllMarketCards } from "@/lib/marketdata";
 import { INSTITUTIONAL_CATEGORY_ORDER, MA_LINE_ORDER } from "@/lib/types";
-import type { InstitutionalCategory, InstitutionalLevel, MaLine, Market, StreakDirection, WatchlistCardData } from "@/lib/types";
+import type { InstitutionalCategory, InstitutionalLevel, MaLine, Market, StreakDirection } from "@/lib/types";
 
 const ALL_LEVELS: InstitutionalLevel[] = ["big_sell", "small_sell", "flat", "small_buy", "big_buy"];
 const ALL_MARKETS: Market[] = ["TWSE", "TPEX"];
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
-
-function netOf(card: WatchlistCardData): number {
-  if (!card.latestInstitutional) return 0;
-  return card.latestInstitutional.foreignNet + card.latestInstitutional.investmentTrustNet + card.latestInstitutional.dealerNet;
-}
 
 /**
  * Server-side search/filter/sort/pagination over the full "所有股票" card set, so the browser
@@ -50,7 +45,6 @@ export async function GET(req: NextRequest) {
   const maLine: MaLine | null = MA_LINE_ORDER.includes(maLineParam as MaLine) ? (maLineParam as MaLine) : null;
   const maDirection = params.get("maDirection") === "below" ? "below" : "above";
 
-  const sortDir = params.get("sortDir") === "asc" ? "asc" : "desc";
   const offset = Math.max(0, Number(params.get("offset")) || 0);
   const limit = Math.min(MAX_LIMIT, Math.max(1, Number(params.get("limit")) || DEFAULT_LIMIT));
 
@@ -71,7 +65,7 @@ export async function GET(req: NextRequest) {
     return true;
   });
 
-  filtered.sort((a, b) => (sortDir === "desc" ? netOf(b) - netOf(a) : netOf(a) - netOf(b)));
+  filtered.sort((a, b) => a.code.localeCompare(b.code));
 
   const page = filtered.slice(offset, offset + limit);
 

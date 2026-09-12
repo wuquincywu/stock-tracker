@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import WatchlistCard, { type CardHighlight } from "@/components/WatchlistCard";
+import type { StockOption } from "@/components/StockSearchInput";
 import {
   INSTITUTIONAL_CATEGORY_LABEL,
   INSTITUTIONAL_CATEGORY_ORDER,
@@ -10,6 +11,8 @@ import {
   MA_LINE_ORDER,
 } from "@/lib/types";
 import type { InstitutionalCategory, InstitutionalLevel, MaLine, Market, StreakDirection, WatchlistCardData } from "@/lib/types";
+
+const SUGGEST_DEBOUNCE_MS = 250;
 
 const LEVEL_ORDER: InstitutionalLevel[] = ["big_sell", "small_sell", "flat", "small_buy", "big_buy"];
 const MARKET_ORDER: Market[] = ["TWSE", "TPEX"];
@@ -50,7 +53,6 @@ export default function MarketOverviewClient({
   const [minStreak, setMinStreak] = useState(0);
   const [maFilterLine, setMaFilterLine] = useState<MaLine | "any">("any");
   const [maFilterDirection, setMaFilterDirection] = useState<MaFilterDirection>("above");
-  const [sortDir, setSortDir] = useState<"desc" | "asc">("desc");
   const [page, setPage] = useState(1);
 
   const [cards, setCards] = useState(initialCards);
@@ -58,6 +60,14 @@ export default function MarketOverviewClient({
   const [loading, setLoading] = useState(false);
   const [tracked, setTracked] = useState<Set<string>>(new Set(trackedCodes));
   const [pendingCode, setPendingCode] = useState<string | null>(null);
+
+  // Autocomplete dropdown for the search box — same UX as StockSearchInput on the watchlist page
+  // (type to see matching stocks), except choosing one filters this page's list down to it instead
+  // of adding it to the watchlist (each card already has its own "+ 追蹤" button for that).
+  const [suggestOptions, setSuggestOptions] = useState<StockOption[]>([]);
+  const [suggestOpen, setSuggestOpen] = useState(false);
+  const [suggestHighlighted, setSuggestHighlighted] = useState(0);
+  const searchContainerRef = useRef<HTMLDivElement>(null);
 
   const filterActive =
     markets.size > 0 ||
@@ -100,7 +110,6 @@ export default function MarketOverviewClient({
           params.set("maLine", String(maFilterLine));
           params.set("maDirection", maFilterDirection);
         }
-        params.set("sortDir", sortDir);
         params.set("offset", String((page - 1) * PAGE_SIZE));
         params.set("limit", String(PAGE_SIZE));
 
@@ -121,7 +130,68 @@ export default function MarketOverviewClient({
       cancelled = true;
       clearTimeout(handle);
     };
-  }, [query, markets, levels, streakCategory, streakDirection, minStreak, maFilterLine, maFilterDirection, sortDir, page]);
+  }, [query, markets, levels, streakCategory, streakDirection, minStreak, maFilterLine, maFilterDirection, page]);
+
+  // Suggestion dropdown fetch — independent of the filter fetch above (different endpoint, own
+  // debounce), so typing narrows the visible list *and* offers a jump-to-this-stock suggestion.
+  useEffect(() => {
+    const trimmed = query.trim();
+    if (!trimmed) return; // onChange already clears suggestOptions/suggestOpen when the field empties
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/stocks/search?q=${encodeURIComponent(trimmed)}`);
+        const data = (await res.json()) as { results?: StockOption[] };
+        if (cancelled) return;
+        const results = data.results ?? [];
+        setSuggestOptions(results);
+        setSuggestOpen(results.length > 0);
+        setSuggestHighlighted(0);
+      } catch {
+        if (!cancelled) {
+          setSuggestOptions([]);
+          setSuggestOpen(false);
+        }
+      }
+    }, SUGGEST_DEBOUNCE_MS);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [query]);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (searchContainerRef.current && !searchContainerRef.current.contains(e.target as Node)) {
+        setSuggestOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  function selectSuggestion(option: StockOption) {
+    setQuery(option.code);
+    setSuggestOptions([]);
+    setSuggestOpen(false);
+    setPage(1);
+  }
+
+  function handleSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (!suggestOpen || suggestOptions.length === 0) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setSuggestHighlighted((h) => (h + 1) % suggestOptions.length);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setSuggestHighlighted((h) => (h - 1 + suggestOptions.length) % suggestOptions.length);
+    } else if (e.key === "Escape") {
+      setSuggestOpen(false);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      selectSuggestion(suggestOptions[suggestHighlighted]);
+    }
+  }
 
   function toggleMarket(market: Market) {
     setMarkets((prev) => {
@@ -145,6 +215,8 @@ export default function MarketOverviewClient({
 
   function resetFilters() {
     setQuery("");
+    setSuggestOptions([]);
+    setSuggestOpen(false);
     setMarkets(new Set());
     setLevels(new Set());
     setStreakCategory("combined");
@@ -174,15 +246,45 @@ export default function MarketOverviewClient({
 
   return (
     <div className="flex flex-col gap-4">
-      <input
-        value={query}
-        onChange={(e) => {
-          setQuery(e.target.value);
-          setPage(1);
-        }}
-        placeholder="搜尋股號或名稱"
-        className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm outline-none focus:border-emerald-500"
-      />
+      <div ref={searchContainerRef} className="relative">
+        <input
+          value={query}
+          onChange={(e) => {
+            const value = e.target.value;
+            setQuery(value);
+            setPage(1);
+            if (!value.trim()) {
+              setSuggestOptions([]);
+              setSuggestOpen(false);
+            }
+          }}
+          onKeyDown={handleSearchKeyDown}
+          onFocus={() => suggestOptions.length > 0 && setSuggestOpen(true)}
+          placeholder="輸入股號或名稱，例如 2330 或 台積電"
+          className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm outline-none focus:border-emerald-500"
+        />
+        {suggestOpen && (
+          <ul className="absolute z-10 mt-1 w-full overflow-hidden rounded-lg border border-zinc-700 bg-zinc-900 shadow-lg">
+            {suggestOptions.map((option, i) => (
+              <li key={option.code}>
+                <button
+                  type="button"
+                  onClick={() => selectSuggestion(option)}
+                  onMouseEnter={() => setSuggestHighlighted(i)}
+                  className={`flex w-full items-center justify-between px-3 py-2 text-left text-sm ${
+                    i === suggestHighlighted ? "bg-zinc-800" : ""
+                  }`}
+                >
+                  <span>{option.name}</span>
+                  <span className="text-xs text-zinc-500">
+                    {option.code} · {option.market === "TWSE" ? "上市" : "上櫃"}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
 
       <div className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-3">
         <div className="flex flex-wrap items-center gap-1.5">
@@ -200,13 +302,6 @@ export default function MarketOverviewClient({
               {MARKET_LABEL[market]}
             </button>
           ))}
-          <button
-            type="button"
-            onClick={() => setSortDir((d) => (d === "desc" ? "asc" : "desc"))}
-            className="ml-auto rounded-full border border-zinc-700 px-2.5 py-1 text-xs font-medium text-zinc-400 hover:border-zinc-600"
-          >
-            {sortDir === "desc" ? "買超優先 ↓" : "賣超優先 ↑"}
-          </button>
         </div>
 
         <div className="mt-2 flex flex-wrap gap-1.5">
