@@ -358,12 +358,16 @@ export async function markNotificationsRead(userId: string, date: string): Promi
 }
 
 /** Whether today's notifications (if any) haven't been opened yet — drives the red-dot badge on
- * the 通知 tab and the PWA app-icon badge. */
+ * the 通知 tab and the PWA app-icon badge. Called on every home/market page render, so this uses a
+ * pipeline (one HTTP round-trip for both GETs) rather than Promise.all-ing two separate REST calls
+ * — Upstash's REST API means every command is its own HTTPS request, and this pair runs on the hot
+ * path for page navigation latency. */
 export async function hasUnreadNotifications(userId: string): Promise<boolean> {
   const today = taipeiDateString();
-  const [items, lastRead] = await Promise.all([
-    getDailyNotifications(userId, today),
-    getLastReadNotificationDate(userId),
-  ]);
-  return items.length > 0 && lastRead !== today;
+  const [items, lastRead] = await redis
+    .pipeline()
+    .get<DailyNotificationItem[]>(notificationsKey(userId, today))
+    .get<string>(notificationsReadKey(userId))
+    .exec();
+  return Array.isArray(items) && items.length > 0 && lastRead !== today;
 }

@@ -1,9 +1,17 @@
 import { cookies } from "next/headers";
 import { cache } from "react";
-import { getRegisteredUsers } from "./redis";
+import { getRegisteredUsers as getRegisteredUsersUncached } from "./redis";
 
 export const USER_COOKIE_NAME = "stock-tracker-user";
 export const USER_COOKIE_MAX_AGE_SECONDS = 365 * 24 * 60 * 60;
+
+/**
+ * Request-deduped wrapper around lib/redis.ts's getRegisteredUsers — the root layout reads this
+ * directly (for UserPicker) *and* getCurrentUser below reads it again to validate the cookie;
+ * without this cache() those were two separate Redis round-trips on every single navigation.
+ * Import this (not the raw redis.ts export) anywhere in a page/layout's render path.
+ */
+export const getRegisteredUsers = cache(getRegisteredUsersUncached);
 
 /**
  * The current device's chosen identity, or null if nobody has picked one yet. Also guards against
