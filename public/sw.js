@@ -8,12 +8,20 @@ self.addEventListener("activate", (event) => {
 
 // PWA app-icon red dot — supported from a service worker per the Badging API spec, so this works
 // even with no page open. Not an exact unread count, just "you have something new"; cleared by
-// ClearAppBadge.tsx when the 通知 page is actually opened. Wrapped in try/catch as well as .catch()
-// since some implementations throw synchronously instead of rejecting the returned promise when
-// the API isn't fully supported/available — either way this must never break notification display.
+// ClearAppBadge.tsx when the 通知 page is actually opened.
+//
+// The Badge mixin is spec'd onto Navigator/WorkerNavigator, so in a service worker the call is
+// `self.navigator.setAppBadge()` — plain `self.setAppBadge()` is undefined in spec-compliant
+// engines and silently no-ops. Checking both here in case an implementation exposes it either way.
+// Also wrapped in try/catch as well as .catch() since some implementations throw synchronously
+// instead of rejecting the returned promise — either way this must never break notification
+// display.
 function trySetAppBadge(count) {
   try {
-    if (self.setAppBadge) return Promise.resolve(self.setAppBadge(count)).catch(() => {});
+    const badgeApi = typeof self.setAppBadge === "function" ? self : self.navigator;
+    if (badgeApi && typeof badgeApi.setAppBadge === "function") {
+      return Promise.resolve(badgeApi.setAppBadge(count)).catch(() => {});
+    }
   } catch {
     // ignore
   }
