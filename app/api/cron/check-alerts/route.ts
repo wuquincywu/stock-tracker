@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { taipeiDateString } from "@/lib/date";
 import { classifyInstitutionalLevel, computeInstitutionalStreaks, detectCrosses } from "@/lib/indicators";
 import { refreshInstitutionalSeries, refreshPriceSeries } from "@/lib/marketdata";
 import { broadcastPush } from "@/lib/push";
@@ -167,7 +168,7 @@ export async function GET(req: NextRequest) {
       name: nameByCode.get(code) ?? code,
       message: parts.join("、"),
     }));
-    const today = new Date().toISOString().slice(0, 10);
+    const today = taipeiDateString();
     await setDailyNotifications(today, items);
 
     try {

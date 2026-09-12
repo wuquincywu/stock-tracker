@@ -1,9 +1,10 @@
 import Link from "next/link";
+import { taipeiDateString } from "@/lib/date";
 import { getDailyNotifications } from "@/lib/redis";
 import WatchlistTabs from "@/components/WatchlistTabs";
 
 export default async function NotificationsPage() {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = taipeiDateString();
 
   let items: Awaited<ReturnType<typeof getDailyNotifications>> = [];
   try {
