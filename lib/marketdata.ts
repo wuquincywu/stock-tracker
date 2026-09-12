@@ -7,9 +7,9 @@ import {
 } from "./indicators";
 import * as finmind from "./finmind";
 import {
+  DEFAULT_CHART_MONTHS,
   getCachedMarketCards,
   getCachedStockDirectory,
-  getChartMonths,
   getMaLines,
   getStoredInstitutionalHistory,
   getStoredInstitutionalHistoryBulk,
@@ -418,7 +418,10 @@ const MARKET_CARDS_CACHE_TTL_MS = 15 * 60 * 1000;
 let inFlightBuild: Promise<WatchlistCardData[]> | null = null;
 
 async function buildAllMarketCards(): Promise<WatchlistCardData[]> {
-  const [directory, chartMonths, maLines] = await Promise.all([getStockDirectory(), getChartMonths(), getMaLines()]);
+  // This builds the shared "所有股票" cache (not any one user's view), so chartMonths — now a
+  // per-user setting — can't apply here; it always uses the app default.
+  const [directory, maLines] = await Promise.all([getStockDirectory(), getMaLines()]);
+  const chartMonths = DEFAULT_CHART_MONTHS;
 
   // Reads whatever's already stored (from the market-wide backfill + tracked-stock views) — never
   // a live per-stock fetch, since that would mean thousands of live API calls on every page view.

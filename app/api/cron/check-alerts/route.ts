@@ -7,6 +7,7 @@ import {
   getAlertConfig,
   getChartMonths,
   getMaLines,
+  getRegisteredUsers,
   getWatchlist,
   markAlerted,
   markLevelAlerted,
@@ -65,24 +66,36 @@ async function checkOne(entry: WatchlistEntry, maLines: number[], chartMonths: n
 
 const MA_LABEL: Record<number, string> = { 5: "MA5", 20: "MA20", 60: "MA60" };
 
-export async function GET(req: NextRequest) {
-  if (!process.env.CRON_SECRET) {
-    return NextResponse.json({ error: "CRON_SECRET not configured" }, { status: 500 });
-  }
-  const authHeader = req.headers.get("authorization");
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+interface UserAlertSummary {
+  checked: number;
+  crosses: number;
+  levelAlerts: number;
+  streakAlerts: number;
+  sent: number;
+  pruned: number;
+  failed: number;
+}
 
-  const [watchlist, maLines, alertConfig, chartMonths] = await Promise.all([
-    getWatchlist(),
-    getMaLines(),
-    getAlertConfig(),
-    getChartMonths(),
+const EMPTY_SUMMARY: UserAlertSummary = {
+  checked: 0,
+  crosses: 0,
+  levelAlerts: 0,
+  streakAlerts: 0,
+  sent: 0,
+  pruned: 0,
+  failed: 0,
+};
+
+/** Runs the full check → notify pipeline for one user's watchlist. `maLines` is shared app-wide
+ * config (not user-configurable); everything else here (watchlist, alert thresholds, chart-months,
+ * dedup, notification history, push subscriptions) is this user's own. */
+async function processUserAlerts(userId: string, maLines: number[]): Promise<UserAlertSummary> {
+  const [watchlist, alertConfig, chartMonths] = await Promise.all([
+    getWatchlist(userId),
+    getAlertConfig(userId),
+    getChartMonths(userId),
   ]);
-  if (watchlist.length === 0) {
-    return NextResponse.json({ checked: 0, crosses: 0, levelAlerts: 0, streakAlerts: 0, sent: 0, pruned: 0 });
-  }
+  if (watchlist.length === 0) return EMPTY_SUMMARY;
 
   const results = await chunkedMap(watchlist, BATCH_SIZE, (entry) => checkOne(entry, maLines, chartMonths));
 
@@ -114,10 +127,10 @@ export async function GET(req: NextRequest) {
       const alertKey: MaAlertKey = `${event.ma}:${event.direction}`;
       if (!alertConfig.maAlerts.includes(alertKey)) continue;
 
-      const already = await wasAlreadyAlerted(event.code, event.ma, event.direction, event.date);
+      const already = await wasAlreadyAlerted(userId, event.code, event.ma, event.direction, event.date);
       if (already) continue;
       appendMessage(event.code, `${event.direction === "up" ? "站上" : "跌破"} ${MA_LABEL[event.ma]}`, () =>
-        markAlerted(event.code, event.ma, event.direction, event.date),
+        markAlerted(userId, event.code, event.ma, event.direction, event.date),
       );
       crossCount++;
     }
@@ -127,10 +140,10 @@ export async function GET(req: NextRequest) {
 
     if (result.level && alertConfig.levels.includes(result.level)) {
       const level = result.level;
-      const already = await wasLevelAlerted(result.code, level, todayDate);
+      const already = await wasLevelAlerted(userId, result.code, level, todayDate);
       if (!already) {
         appendMessage(result.code, `法人${INSTITUTIONAL_LEVEL_LABEL[level]}`, () =>
-          markLevelAlerted(result.code, level, todayDate),
+          markLevelAlerted(userId, result.code, level, todayDate),
         );
         levelAlertCount++;
       }
@@ -141,12 +154,12 @@ export async function GET(req: NextRequest) {
       const streak = result.streaks[category];
       if (threshold <= 0 || !streak || streak.length < threshold) continue;
 
-      const already = await wasStreakAlerted(result.code, category, streak.direction, todayDate);
+      const already = await wasStreakAlerted(userId, result.code, category, streak.direction, todayDate);
       if (!already) {
         appendMessage(
           result.code,
           `${INSTITUTIONAL_CATEGORY_LABEL[category]}連${streak.length}${streak.direction === "buy" ? "買" : "賣"}`,
-          () => markStreakAlerted(result.code, category, streak.direction, todayDate),
+          () => markStreakAlerted(userId, result.code, category, streak.direction, todayDate),
         );
         streakAlertCount++;
       }
@@ -169,10 +182,10 @@ export async function GET(req: NextRequest) {
       parts,
     }));
     const today = taipeiDateString();
-    await setDailyNotifications(today, items);
+    await setDailyNotifications(userId, today, items);
 
     try {
-      const result = await broadcastPush({
+      const result = await broadcastPush(userId, {
         title: "股票追蹤",
         body: `今天有 ${items.length} 檔股票觸發提醒，點擊查看詳情`,
         url: "/notifications",
@@ -184,11 +197,11 @@ export async function GET(req: NextRequest) {
       const allMarks = [...pendingMarksByCode.values()].flat();
       await Promise.all(allMarks.map((mark) => mark()));
     } catch (err) {
-      console.error("[check-alerts] combined push failed, leaving dedup unmarked for retry:", err);
+      console.error(`[check-alerts] combined push failed for user ${userId}, leaving dedup unmarked for retry:`, err);
     }
   }
 
-  return NextResponse.json({
+  return {
     checked: watchlist.length,
     crosses: crossCount,
     levelAlerts: levelAlertCount,
@@ -196,5 +209,45 @@ export async function GET(req: NextRequest) {
     sent,
     pruned,
     failed,
-  });
+  };
+}
+
+export async function GET(req: NextRequest) {
+  if (!process.env.CRON_SECRET) {
+    return NextResponse.json({ error: "CRON_SECRET not configured" }, { status: 500 });
+  }
+  const authHeader = req.headers.get("authorization");
+  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+
+  const [users, maLines] = await Promise.all([getRegisteredUsers(), getMaLines()]);
+
+  // Sequential, not parallel — each user's checkOne loop already hits TWSE/FinMind per tracked
+  // stock, and running every user's batch at once would multiply that concurrent external load
+  // (this app has already hit TWSE's WAF from bursty traffic before; see lib/httpFetch.ts).
+  const perUser: Record<string, UserAlertSummary> = {};
+  for (const userId of users) {
+    try {
+      perUser[userId] = await processUserAlerts(userId, maLines);
+    } catch (err) {
+      console.error(`[check-alerts] failed for user ${userId}:`, err);
+      perUser[userId] = EMPTY_SUMMARY;
+    }
+  }
+
+  const totals = Object.values(perUser).reduce<UserAlertSummary>(
+    (acc, r) => ({
+      checked: acc.checked + r.checked,
+      crosses: acc.crosses + r.crosses,
+      levelAlerts: acc.levelAlerts + r.levelAlerts,
+      streakAlerts: acc.streakAlerts + r.streakAlerts,
+      sent: acc.sent + r.sent,
+      pruned: acc.pruned + r.pruned,
+      failed: acc.failed + r.failed,
+    }),
+    { ...EMPTY_SUMMARY },
+  );
+
+  return NextResponse.json({ users: users.length, ...totals, perUser });
 }

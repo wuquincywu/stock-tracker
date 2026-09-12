@@ -7,6 +7,7 @@ import {
 } from "@/lib/indicators";
 import { getInstitutionalSeries, getPriceSeries } from "@/lib/marketdata";
 import { DEFAULT_CHART_MONTHS, getChartMonths, getMaLines, getWatchlist, hasUnreadNotifications } from "@/lib/redis";
+import { getCurrentUser } from "@/lib/users";
 import type { InstitutionalRow, MaLine, WatchlistEntry } from "@/lib/types";
 import WatchlistClient, { type WatchlistCardData } from "@/components/WatchlistClient";
 import WatchlistTabs from "@/components/WatchlistTabs";
@@ -64,16 +65,19 @@ async function buildCardData(entry: WatchlistEntry, chartMonths: number, maLines
 }
 
 export default async function Home() {
+  const currentUser = await getCurrentUser();
+  if (!currentUser) return null; // layout renders the "who are you" picker instead
+
   let watchlist: WatchlistEntry[] = [];
   let chartMonths = DEFAULT_CHART_MONTHS;
   let maLines: MaLine[] = [5, 20, 60];
   let unread = false;
   try {
     [watchlist, chartMonths, maLines, unread] = await Promise.all([
-      getWatchlist(),
-      getChartMonths(),
+      getWatchlist(currentUser),
+      getChartMonths(currentUser),
       getMaLines(),
-      hasUnreadNotifications(),
+      hasUnreadNotifications(currentUser),
     ]);
   } catch {
     watchlist = [];

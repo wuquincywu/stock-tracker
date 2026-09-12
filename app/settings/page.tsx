@@ -1,9 +1,13 @@
 import { DEFAULT_CHART_MONTHS, getAlertConfig, getChartMonths } from "@/lib/redis";
+import { getCurrentUser } from "@/lib/users";
 import { ALL_MA_ALERT_KEYS } from "@/lib/types";
 import SettingsClient from "@/components/SettingsClient";
 import BackButton from "@/components/ui/BackButton";
 
 export default async function SettingsPage() {
+  const currentUser = await getCurrentUser();
+  if (!currentUser) return null; // layout renders the "who are you" picker instead
+
   let config = {
     levels: [],
     streakThresholds: { foreign: 0, trust: 0, dealer: 0, combined: 0 },
@@ -11,7 +15,7 @@ export default async function SettingsPage() {
   } as Awaited<ReturnType<typeof getAlertConfig>>;
   let chartMonths = DEFAULT_CHART_MONTHS;
   try {
-    [config, chartMonths] = await Promise.all([getAlertConfig(), getChartMonths()]);
+    [config, chartMonths] = await Promise.all([getAlertConfig(currentUser), getChartMonths(currentUser)]);
   } catch {
     // fall back to the defaults above if Redis isn't reachable
   }

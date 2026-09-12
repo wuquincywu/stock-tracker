@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { taipeiDateString } from "@/lib/date";
 import { getDailyNotifications, markNotificationsRead } from "@/lib/redis";
+import { getCurrentUser } from "@/lib/users";
 import ClearAppBadge from "@/components/ClearAppBadge";
 import WatchlistTabs from "@/components/WatchlistTabs";
 
@@ -13,14 +14,17 @@ function partColor(part: string): string {
 }
 
 export default async function NotificationsPage() {
+  const currentUser = await getCurrentUser();
+  if (!currentUser) return null; // layout renders the "who are you" picker instead
+
   const today = taipeiDateString();
 
   let items: Awaited<ReturnType<typeof getDailyNotifications>> = [];
   try {
-    items = await getDailyNotifications(today);
+    items = await getDailyNotifications(currentUser, today);
     // Opening this page is what "reads" today's notifications — clears the tab's red dot and the
     // PWA app-icon badge (the latter via ClearAppBadge below) for next time.
-    if (items.length > 0) await markNotificationsRead(today);
+    if (items.length > 0) await markNotificationsRead(currentUser, today);
   } catch {
     // Redis unreachable — falls through to the empty state below
   }

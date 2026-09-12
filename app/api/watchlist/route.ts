@@ -1,13 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { lookupStock, searchStocks } from "@/lib/marketdata";
 import { addToWatchlist, getWatchlist, removeFromWatchlist } from "@/lib/redis";
+import { getCurrentUser } from "@/lib/users";
 
 export async function GET() {
-  const watchlist = await getWatchlist();
+  const currentUser = await getCurrentUser();
+  if (!currentUser) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const watchlist = await getWatchlist(currentUser);
   return NextResponse.json({ watchlist });
 }
 
 export async function POST(req: NextRequest) {
+  const currentUser = await getCurrentUser();
+  if (!currentUser) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+
   const body = (await req.json()) as { code?: string };
   const code = body.code?.trim();
   if (!code) {
@@ -35,16 +41,19 @@ export async function POST(req: NextRequest) {
   }
 
   const entry = { code: resolvedCode, name: info.name, market: info.market };
-  await addToWatchlist(entry);
+  await addToWatchlist(currentUser, entry);
   return NextResponse.json({ entry });
 }
 
 export async function DELETE(req: NextRequest) {
+  const currentUser = await getCurrentUser();
+  if (!currentUser) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+
   const { searchParams } = new URL(req.url);
   const code = searchParams.get("code");
   if (!code) {
     return NextResponse.json({ error: "code is required" }, { status: 400 });
   }
-  await removeFromWatchlist(code);
+  await removeFromWatchlist(currentUser, code);
   return NextResponse.json({ ok: true });
 }

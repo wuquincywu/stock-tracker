@@ -20,14 +20,10 @@ import { ALL_MA_ALERT_KEYS, INSTITUTIONAL_CATEGORY_ORDER } from "./types";
 const redis = Redis.fromEnv();
 
 const KEYS = {
-  watchlist: "watchlist",
-  subscriptions: "push:subscriptions",
-  dedup: "alert:dedup",
   maLines: "config:maLines",
-  alertConfig: "config:alerts",
-  chartMonths: "config:chartMonths",
   stockDirectory: "cache:stockDirectory",
   marketCards: "cache:marketCards",
+  users: "users:list",
 } as const;
 
 const STOCK_DIRECTORY_TTL_SECONDS = 24 * 60 * 60; // stock list changes rarely — refresh once a day
@@ -45,80 +41,124 @@ export const DEFAULT_CHART_MONTHS = 3;
 const MIN_CHART_MONTHS = 1;
 const MAX_CHART_MONTHS = 24;
 
-export async function getWatchlist(): Promise<WatchlistEntry[]> {
-  const raw = await redis.hgetall<Record<string, WatchlistEntry>>(KEYS.watchlist);
+// ---- Multi-user identity ----
+// A small, fixed-trust group (personal tool for a handful of family/friends, not a public
+// service) — no passwords, just a chosen display name registered here and remembered via a
+// cookie (see lib/users.ts). Everything below this point that used to be one global record per
+// kind (watchlist, push subscriptions, dedup, alert config, chart-months, notifications) is now
+// namespaced per registered user; only truly market-wide data (stock directory, price/
+// institutional history, the market-cards cache) stays global.
+
+const MAX_USERS = 20; // sanity cap, not an auth mechanism — this is a small-group tool
+const MAX_USER_NAME_LENGTH = 20;
+
+export async function getRegisteredUsers(): Promise<string[]> {
+  const raw = await redis.get<string[]>(KEYS.users);
+  return Array.isArray(raw) ? raw : [];
+}
+
+/** Registers `name` if it's new; re-adding an already-registered name is a harmless no-op. */
+export async function registerUser(name: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const trimmed = name.trim();
+  if (!trimmed) return { ok: false, error: "請輸入名字" };
+  if (trimmed.length > MAX_USER_NAME_LENGTH) return { ok: false, error: "名字太長了" };
+
+  const users = await getRegisteredUsers();
+  if (users.includes(trimmed)) return { ok: true };
+  if (users.length >= MAX_USERS) return { ok: false, error: "使用者數量已達上限" };
+
+  await redis.set(KEYS.users, [...users, trimmed]);
+  return { ok: true };
+}
+
+function watchlistKey(userId: string): string {
+  return `watchlist:${userId}`;
+}
+
+export async function getWatchlist(userId: string): Promise<WatchlistEntry[]> {
+  const raw = await redis.hgetall<Record<string, WatchlistEntry>>(watchlistKey(userId));
   if (!raw) return [];
   return Object.values(raw).sort((a, b) => a.code.localeCompare(b.code));
 }
 
-export async function addToWatchlist(entry: WatchlistEntry): Promise<void> {
-  await redis.hset(KEYS.watchlist, { [entry.code]: entry });
+export async function addToWatchlist(userId: string, entry: WatchlistEntry): Promise<void> {
+  await redis.hset(watchlistKey(userId), { [entry.code]: entry });
 }
 
-export async function removeFromWatchlist(code: string): Promise<void> {
-  await redis.hdel(KEYS.watchlist, code);
+export async function removeFromWatchlist(userId: string, code: string): Promise<void> {
+  await redis.hdel(watchlistKey(userId), code);
 }
 
-export async function getSubscriptions(): Promise<PushSubscriptionRecord[]> {
-  const raw = await redis.hgetall<Record<string, PushSubscriptionRecord>>(KEYS.subscriptions);
+function subscriptionsKey(userId: string): string {
+  return `push:subscriptions:${userId}`;
+}
+
+export async function getSubscriptions(userId: string): Promise<PushSubscriptionRecord[]> {
+  const raw = await redis.hgetall<Record<string, PushSubscriptionRecord>>(subscriptionsKey(userId));
   return raw ? Object.values(raw) : [];
 }
 
-export async function addSubscription(sub: PushSubscriptionRecord): Promise<void> {
-  await redis.hset(KEYS.subscriptions, { [sub.endpoint]: sub });
+export async function addSubscription(userId: string, sub: PushSubscriptionRecord): Promise<void> {
+  await redis.hset(subscriptionsKey(userId), { [sub.endpoint]: sub });
 }
 
-export async function removeSubscription(endpoint: string): Promise<void> {
-  await redis.hdel(KEYS.subscriptions, endpoint);
+export async function removeSubscription(userId: string, endpoint: string): Promise<void> {
+  await redis.hdel(subscriptionsKey(userId), endpoint);
+}
+
+function dedupKey(userId: string): string {
+  return `alert:dedup:${userId}`;
 }
 
 /** Generic once-per-trading-day dedup: has `key` already been alerted for `date`? */
-async function wasKeyAlerted(key: string, date: string): Promise<boolean> {
-  const last = await redis.hget<string>(KEYS.dedup, key);
+async function wasKeyAlerted(userId: string, key: string, date: string): Promise<boolean> {
+  const last = await redis.hget<string>(dedupKey(userId), key);
   return last === date;
 }
 
-async function markKeyAlerted(key: string, date: string): Promise<void> {
-  await redis.hset(KEYS.dedup, { [key]: date });
+async function markKeyAlerted(userId: string, key: string, date: string): Promise<void> {
+  await redis.hset(dedupKey(userId), { [key]: date });
 }
 
 function maKey(code: string, ma: MaLine, direction: CrossDirection): string {
   return `${code}:ma:${ma}:${direction}`;
 }
 
-export const wasAlreadyAlerted = (code: string, ma: MaLine, direction: CrossDirection, date: string) =>
-  wasKeyAlerted(maKey(code, ma, direction), date);
+export const wasAlreadyAlerted = (userId: string, code: string, ma: MaLine, direction: CrossDirection, date: string) =>
+  wasKeyAlerted(userId, maKey(code, ma, direction), date);
 
-export const markAlerted = (code: string, ma: MaLine, direction: CrossDirection, date: string) =>
-  markKeyAlerted(maKey(code, ma, direction), date);
+export const markAlerted = (userId: string, code: string, ma: MaLine, direction: CrossDirection, date: string) =>
+  markKeyAlerted(userId, maKey(code, ma, direction), date);
 
 function levelKey(code: string, level: InstitutionalLevel): string {
   return `${code}:level:${level}`;
 }
 
-export const wasLevelAlerted = (code: string, level: InstitutionalLevel, date: string) =>
-  wasKeyAlerted(levelKey(code, level), date);
+export const wasLevelAlerted = (userId: string, code: string, level: InstitutionalLevel, date: string) =>
+  wasKeyAlerted(userId, levelKey(code, level), date);
 
-export const markLevelAlerted = (code: string, level: InstitutionalLevel, date: string) =>
-  markKeyAlerted(levelKey(code, level), date);
+export const markLevelAlerted = (userId: string, code: string, level: InstitutionalLevel, date: string) =>
+  markKeyAlerted(userId, levelKey(code, level), date);
 
 function streakKey(code: string, category: InstitutionalCategory, direction: StreakDirection): string {
   return `${code}:streak:${category}:${direction}`;
 }
 
 export const wasStreakAlerted = (
+  userId: string,
   code: string,
   category: InstitutionalCategory,
   direction: StreakDirection,
   date: string,
-) => wasKeyAlerted(streakKey(code, category, direction), date);
+) => wasKeyAlerted(userId, streakKey(code, category, direction), date);
 
 export const markStreakAlerted = (
+  userId: string,
   code: string,
   category: InstitutionalCategory,
   direction: StreakDirection,
   date: string,
-) => markKeyAlerted(streakKey(code, category, direction), date);
+) => markKeyAlerted(userId, streakKey(code, category, direction), date);
 
 export async function getMaLines(): Promise<MaLine[]> {
   const raw = await redis.get<string>(KEYS.maLines);
@@ -158,8 +198,12 @@ function parseMaAlerts(raw: Record<string, unknown>): MaAlertKey[] {
   return valid;
 }
 
-export async function getAlertConfig(): Promise<AlertConfig> {
-  const raw = await redis.get<Record<string, unknown>>(KEYS.alertConfig);
+function alertConfigKey(userId: string): string {
+  return `config:alerts:${userId}`;
+}
+
+export async function getAlertConfig(userId: string): Promise<AlertConfig> {
+  const raw = await redis.get<Record<string, unknown>>(alertConfigKey(userId));
   if (!raw) return DEFAULT_ALERT_CONFIG;
   const levels = Array.isArray(raw.levels)
     ? (raw.levels as InstitutionalLevel[]).filter((l) => ALL_LEVELS.includes(l))
@@ -167,7 +211,7 @@ export async function getAlertConfig(): Promise<AlertConfig> {
   return { levels, streakThresholds: parseStreakThresholds(raw), maAlerts: parseMaAlerts(raw) };
 }
 
-export async function setAlertConfig(config: AlertConfig): Promise<void> {
+export async function setAlertConfig(userId: string, config: AlertConfig): Promise<void> {
   const levels = config.levels.filter((l) => ALL_LEVELS.includes(l));
   const streakThresholds: Record<InstitutionalCategory, number> = { foreign: 0, trust: 0, dealer: 0, combined: 0 };
   for (const category of INSTITUTIONAL_CATEGORY_ORDER) {
@@ -175,21 +219,25 @@ export async function setAlertConfig(config: AlertConfig): Promise<void> {
     streakThresholds[category] = Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
   }
   const maAlerts = (config.maAlerts ?? []).filter((k) => ALL_MA_ALERT_KEYS.includes(k));
-  await redis.set(KEYS.alertConfig, { levels, streakThresholds, maAlerts });
+  await redis.set(alertConfigKey(userId), { levels, streakThresholds, maAlerts });
 }
 
 export function clampChartMonths(months: number): number {
   return Math.min(MAX_CHART_MONTHS, Math.max(MIN_CHART_MONTHS, Math.floor(months) || DEFAULT_CHART_MONTHS));
 }
 
+function chartMonthsKey(userId: string): string {
+  return `config:chartMonths:${userId}`;
+}
+
 /** How many months of price/chart history to fetch — user-configurable, defaults to 3. */
-export async function getChartMonths(): Promise<number> {
-  const raw = await redis.get<number>(KEYS.chartMonths);
+export async function getChartMonths(userId: string): Promise<number> {
+  const raw = await redis.get<number>(chartMonthsKey(userId));
   return Number.isFinite(raw) ? clampChartMonths(raw as number) : DEFAULT_CHART_MONTHS;
 }
 
-export async function setChartMonths(months: number): Promise<void> {
-  await redis.set(KEYS.chartMonths, clampChartMonths(months));
+export async function setChartMonths(userId: string, months: number): Promise<void> {
+  await redis.set(chartMonthsKey(userId), clampChartMonths(months));
 }
 
 export async function getCachedStockDirectory(): Promise<StockDirectoryEntry[] | null> {
@@ -336,35 +384,40 @@ export interface DailyNotificationItem {
 
 const NOTIFICATIONS_TTL_SECONDS = 30 * 24 * 60 * 60; // one-off daily record, not routine cache — keep a month of history
 
-function notificationsKey(date: string): string {
-  return `notifications:${date}`;
+function notificationsKey(userId: string, date: string): string {
+  return `notifications:${userId}:${date}`;
 }
 
-export async function setDailyNotifications(date: string, items: DailyNotificationItem[]): Promise<void> {
-  await redis.set(notificationsKey(date), items, { ex: NOTIFICATIONS_TTL_SECONDS });
+export async function setDailyNotifications(userId: string, date: string, items: DailyNotificationItem[]): Promise<void> {
+  await redis.set(notificationsKey(userId, date), items, { ex: NOTIFICATIONS_TTL_SECONDS });
 }
 
-export async function getDailyNotifications(date: string): Promise<DailyNotificationItem[]> {
-  const raw = await redis.get<DailyNotificationItem[]>(notificationsKey(date));
+export async function getDailyNotifications(userId: string, date: string): Promise<DailyNotificationItem[]> {
+  const raw = await redis.get<DailyNotificationItem[]>(notificationsKey(userId, date));
   return Array.isArray(raw) ? raw : [];
 }
 
-const NOTIFICATIONS_READ_KEY = "notifications:lastRead";
+function notificationsReadKey(userId: string): string {
+  return `notifications:lastRead:${userId}`;
+}
 
-/** The most recent date (YYYY-MM-DD, Taipei calendar) the user has opened the 通知 page. */
-export async function getLastReadNotificationDate(): Promise<string | null> {
-  const raw = await redis.get<string>(NOTIFICATIONS_READ_KEY);
+/** The most recent date (YYYY-MM-DD, Taipei calendar) this user has opened the 通知 page. */
+export async function getLastReadNotificationDate(userId: string): Promise<string | null> {
+  const raw = await redis.get<string>(notificationsReadKey(userId));
   return typeof raw === "string" ? raw : null;
 }
 
-export async function markNotificationsRead(date: string): Promise<void> {
-  await redis.set(NOTIFICATIONS_READ_KEY, date);
+export async function markNotificationsRead(userId: string, date: string): Promise<void> {
+  await redis.set(notificationsReadKey(userId), date);
 }
 
 /** Whether today's notifications (if any) haven't been opened yet — drives the red-dot badge on
  * the 通知 tab and the PWA app-icon badge. */
-export async function hasUnreadNotifications(): Promise<boolean> {
+export async function hasUnreadNotifications(userId: string): Promise<boolean> {
   const today = taipeiDateString();
-  const [items, lastRead] = await Promise.all([getDailyNotifications(today), getLastReadNotificationDate()]);
+  const [items, lastRead] = await Promise.all([
+    getDailyNotifications(userId, today),
+    getLastReadNotificationDate(userId),
+  ]);
   return items.length > 0 && lastRead !== today;
 }

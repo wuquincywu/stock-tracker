@@ -2,7 +2,11 @@ import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Link from "next/link";
 import "./globals.css";
+import { getRegisteredUsers } from "@/lib/redis";
+import { getCurrentUser } from "@/lib/users";
 import PushSetup from "@/components/PushSetup";
+import UserPicker from "@/components/UserPicker";
+import UserSwitcher from "@/components/UserSwitcher";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -23,7 +27,17 @@ export const viewport: Viewport = {
   themeColor: "#0a0a0a",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default async function RootLayout({ children }: LayoutProps<"/">) {
+  let users: string[] = [];
+  let currentUser: string | null = null;
+  try {
+    users = await getRegisteredUsers();
+    currentUser = await getCurrentUser();
+  } catch {
+    // Redis unreachable — fall through with no confirmed user; UserPicker still works (its "+
+    // 新增使用者" form will itself fail until Redis is back, which is the best available signal).
+  }
+
   return (
     <html
       lang="zh-Hant"
@@ -34,17 +48,20 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           <Link href="/" className="text-lg font-semibold tracking-tight">
             股票追蹤
           </Link>
-          <div className="flex items-center gap-4">
-            <Link href="/faq" className="text-sm text-zinc-400 hover:text-zinc-100">
-              常見問題
-            </Link>
-            <Link href="/settings" className="text-sm text-zinc-400 hover:text-zinc-100">
-              通知設定
-            </Link>
-          </div>
+          {currentUser && (
+            <div className="flex items-center gap-4">
+              <Link href="/faq" className="text-sm text-zinc-400 hover:text-zinc-100">
+                常見問題
+              </Link>
+              <Link href="/settings" className="text-sm text-zinc-400 hover:text-zinc-100">
+                通知設定
+              </Link>
+              <UserSwitcher name={currentUser} />
+            </div>
+          )}
         </header>
-        <main className="flex-1">{children}</main>
-        <PushSetup />
+        <main className="flex-1">{currentUser ? children : <UserPicker users={users} />}</main>
+        {currentUser && <PushSetup />}
       </body>
     </html>
   );

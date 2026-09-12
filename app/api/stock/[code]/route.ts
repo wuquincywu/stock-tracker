@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { classifyInstitutionalLevel, computeInstitutionalStreaks } from "@/lib/indicators";
 import { getChartSeries, getInstitutionalSeries, lookupStock } from "@/lib/marketdata";
-import { clampChartMonths, getChartMonths } from "@/lib/redis";
+import { clampChartMonths, DEFAULT_CHART_MONTHS } from "@/lib/redis";
 
 const INSTITUTIONAL_HISTORY_DAYS = 40; // enough trading rows for classifyInstitutionalLevel's baseline
 
@@ -22,7 +22,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ code
       return NextResponse.json({ error: `找不到股號 ${code}` }, { status: 404 });
     }
 
-    const months = monthsParam !== null ? clampChartMonths(Number(monthsParam)) : await getChartMonths();
+    const months = monthsParam !== null ? clampChartMonths(Number(monthsParam)) : DEFAULT_CHART_MONTHS;
     const [{ prices, bands }, institutional] = await Promise.all([
       getChartSeries(code, info.market, months, months > LIVE_FETCH_THRESHOLD_MONTHS),
       getInstitutionalSeries(code, INSTITUTIONAL_HISTORY_DAYS),

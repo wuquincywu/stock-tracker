@@ -27,10 +27,10 @@ export interface BroadcastResult {
   failed: number;
 }
 
-/** Sends `payload` to every stored subscription, pruning any that report gone (410/404). */
-export async function broadcastPush(payload: PushPayload): Promise<BroadcastResult> {
+/** Sends `payload` to every subscription stored for `userId`, pruning any that report gone (410/404). */
+export async function broadcastPush(userId: string, payload: PushPayload): Promise<BroadcastResult> {
   ensureConfigured();
-  const subscriptions = await getSubscriptions();
+  const subscriptions = await getSubscriptions(userId);
   let sent = 0;
   let pruned = 0;
   let failed = 0;
@@ -43,7 +43,7 @@ export async function broadcastPush(payload: PushPayload): Promise<BroadcastResu
       } catch (err) {
         const statusCode = (err as { statusCode?: number }).statusCode;
         if (statusCode === 410 || statusCode === 404) {
-          await removeSubscription(sub.endpoint);
+          await removeSubscription(userId, sub.endpoint);
           pruned += 1;
         } else {
           failed += 1;

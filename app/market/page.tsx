@@ -1,5 +1,6 @@
 import { getAllMarketCards } from "@/lib/marketdata";
 import { getWatchlist, hasUnreadNotifications } from "@/lib/redis";
+import { getCurrentUser } from "@/lib/users";
 import MarketOverviewClient from "@/components/MarketOverviewClient";
 import WatchlistTabs from "@/components/WatchlistTabs";
 import type { WatchlistCardData } from "@/lib/types";
@@ -14,6 +15,9 @@ function netOf(card: WatchlistCardData): number {
 }
 
 export default async function MarketPage() {
+  const currentUser = await getCurrentUser();
+  if (!currentUser) return null; // layout renders the "who are you" picker instead
+
   let initialCards: WatchlistCardData[] = [];
   let initialTotal = 0;
   let trackedCodes: string[] = [];
@@ -22,8 +26,8 @@ export default async function MarketPage() {
   try {
     const [allCards, watchlist, unreadResult] = await Promise.all([
       getAllMarketCards(),
-      getWatchlist(),
-      hasUnreadNotifications(),
+      getWatchlist(currentUser),
+      hasUnreadNotifications(currentUser),
     ]);
     trackedCodes = watchlist.map((w) => w.code);
     const sorted = [...allCards].sort((a, b) => netOf(b) - netOf(a));
