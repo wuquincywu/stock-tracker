@@ -6,6 +6,20 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(self.clients.claim());
 });
 
+// PWA app-icon red dot — supported from a service worker per the Badging API spec, so this works
+// even with no page open. Not an exact unread count, just "you have something new"; cleared by
+// ClearAppBadge.tsx when the 通知 page is actually opened. Wrapped in try/catch as well as .catch()
+// since some implementations throw synchronously instead of rejecting the returned promise when
+// the API isn't fully supported/available — either way this must never break notification display.
+function trySetAppBadge(count) {
+  try {
+    if (self.setAppBadge) return Promise.resolve(self.setAppBadge(count)).catch(() => {});
+  } catch {
+    // ignore
+  }
+  return Promise.resolve();
+}
+
 self.addEventListener("push", (event) => {
   let payload = { title: "股票追蹤", body: "", url: "/" };
   try {
@@ -22,10 +36,7 @@ self.addEventListener("push", (event) => {
         badge: "/icons/icon-192.png",
         data: { url: payload.url },
       }),
-      // PWA app-icon red dot — supported from a service worker per the Badging API spec, so this
-      // works even with no page open. Not an exact unread count, just "you have something new";
-      // cleared by ClearAppBadge.tsx when the 通知 page is actually opened.
-      self.setAppBadge ? self.setAppBadge(1).catch(() => {}) : Promise.resolve(),
+      trySetAppBadge(1),
     ]),
   );
 });
