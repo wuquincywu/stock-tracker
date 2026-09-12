@@ -1,0 +1,47 @@
+import { NextRequest, NextResponse } from "next/server";
+import { classifyInstitutionalLevel, computeInstitutionalStreaks } from "@/lib/indicators";
+import { getChartSeries, getInstitutionalSeries, lookupStock } from "@/lib/marketdata";
+import { clampChartMonths, getChartMonths } from "@/lib/redis";
+
+const INSTITUTIONAL_HISTORY_DAYS = 40; // enough trading rows for classifyInstitutionalLevel's baseline
+
+// Matches the stock detail page's default chart window (see app/stock/[code]/page.tsx and
+// components/StockChartSection.tsx). A request for this many months or fewer is always served
+// from whatever's already stored (populated by the daily cron / backfills) — only a request for
+// MORE triggers a live fetch, since that's an explicit "show me further back" action from the
+// month-range buttons, not something that should happen silently on every page view.
+const LIVE_FETCH_THRESHOLD_MONTHS = 3;
+
+export async function GET(req: NextRequest, { params }: { params: Promise<{ code: string }> }) {
+  const { code } = await params;
+  const monthsParam = req.nextUrl.searchParams.get("months");
+
+  try {
+    const info = await lookupStock(code);
+    if (!info) {
+      return NextResponse.json({ error: `找不到股號 ${code}` }, { status: 404 });
+    }
+
+    const months = monthsParam !== null ? clampChartMonths(Number(monthsParam)) : await getChartMonths();
+    const [{ prices, bands }, institutional] = await Promise.all([
+      getChartSeries(code, info.market, months, months > LIVE_FETCH_THRESHOLD_MONTHS),
+      getInstitutionalSeries(code, INSTITUTIONAL_HISTORY_DAYS),
+    ]);
+
+    const level = classifyInstitutionalLevel(institutional);
+    const streaks = computeInstitutionalStreaks(institutional);
+
+    return NextResponse.json({
+      code,
+      name: info.name,
+      market: info.market,
+      prices,
+      bands,
+      institutional: institutional.slice(-10),
+      level,
+      streaks,
+    });
+  } catch {
+    return NextResponse.json({ error: "資料來源暫時無法連線，請稍後再試一次" }, { status: 503 });
+  }
+}
