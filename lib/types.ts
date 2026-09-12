@@ -110,6 +110,14 @@ export interface MaSnapshot {
   above: boolean;
 }
 
+export interface NotificationPart {
+  text: string;
+  /** True only for an MA alert whose direction actually flipped today (a genuine crossing moment,
+   * not just "still the same side as yesterday") — drives an outline highlight on the 通知 page.
+   * Always false for 法人分級/連續買賣 parts, which don't have a "crossing" concept. */
+  isCrossMoment: boolean;
+}
+
 /** The rich per-stock card shown on both the watchlist ("已追蹤股票") and market browse ("所有股票") pages. */
 export interface WatchlistCardData extends WatchlistEntry {
   latestInstitutional: InstitutionalRow | null;

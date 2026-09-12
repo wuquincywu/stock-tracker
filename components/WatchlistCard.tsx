@@ -92,7 +92,7 @@ export default function WatchlistCard({
                 s.above ? "bg-red-500/15 text-red-300" : "bg-emerald-500/15 text-emerald-300"
               } ${s.ma === highlight.maLine ? MA_HIGHLIGHT_BORDER : MA_NO_HIGHLIGHT_BORDER}`}
             >
-              MA{s.ma} {s.value.toFixed(1)} · {s.above ? "站上" : "低於"}
+              {s.above ? "站上" : "低於"}MA{s.ma}
             </span>
           ))}
         </div>

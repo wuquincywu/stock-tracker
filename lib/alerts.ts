@@ -15,7 +15,15 @@ import {
   wasStreakAlerted,
 } from "./redis";
 import { INSTITUTIONAL_CATEGORY_LABEL, INSTITUTIONAL_CATEGORY_ORDER, INSTITUTIONAL_LEVEL_LABEL } from "./types";
-import type { CrossDirection, InstitutionalStreakSet, MaAlertKey, MaLine, MaSnapshot, WatchlistEntry } from "./types";
+import type {
+  CrossDirection,
+  InstitutionalStreakSet,
+  MaAlertKey,
+  MaLine,
+  MaSnapshot,
+  NotificationPart,
+  WatchlistEntry,
+} from "./types";
 
 const INSTITUTIONAL_HISTORY_DAYS = 40; // enough trading rows for a meaningful level baseline (min 20)
 const BATCH_SIZE = 5;
@@ -33,6 +41,10 @@ interface StockCheckResult {
   code: string;
   priceDate: string | null;
   maSnapshot: MaSnapshot[];
+  /** Yesterday's snapshot (same MA lines, one day less of price history) — compared against
+   * `maSnapshot` to tell a genuine crossing moment (side flipped) from just persisting on the same
+   * side as before. */
+  prevMaSnapshot: MaSnapshot[];
   institutionalDate: string | null;
   level: ReturnType<typeof classifyInstitutionalLevel>;
   streaks: InstitutionalStreakSet;
@@ -45,6 +57,7 @@ async function checkOne(entry: WatchlistEntry, maLines: number[], chartMonths: n
     code: entry.code,
     priceDate: null,
     maSnapshot: [],
+    prevMaSnapshot: [],
     institutionalDate: null,
     level: null,
     streaks: EMPTY_STREAKS,
@@ -57,11 +70,12 @@ async function checkOne(entry: WatchlistEntry, maLines: number[], chartMonths: n
 
     const priceDate = prices.length > 0 ? prices[prices.length - 1].date : null;
     const maSnapshot = latestMaSnapshot(prices, maLines as MaLine[]);
+    const prevMaSnapshot = prices.length > 1 ? latestMaSnapshot(prices.slice(0, -1), maLines as MaLine[]) : [];
     const institutionalDate = institutional.length > 0 ? institutional[institutional.length - 1].date : null;
     const level = classifyInstitutionalLevel(institutional);
     const streaks = computeInstitutionalStreaks(institutional);
 
-    return { code: entry.code, priceDate, maSnapshot, institutionalDate, level, streaks };
+    return { code: entry.code, priceDate, maSnapshot, prevMaSnapshot, institutionalDate, level, streaks };
   } catch {
     return empty;
   }
@@ -116,16 +130,16 @@ export async function processUserAlerts(userId: string, maLines: number[]): Prom
   // since dedup is keyed by date, that day's occurrence would never be retried once the date moves
   // on. Deferring the mark means a failed push simply gets retried on the next run (cron, or a
   // manual re-run via the test button) instead of being silently and permanently swallowed.
-  const messagesByCode = new Map<string, string[]>();
+  const messagesByCode = new Map<string, NotificationPart[]>();
   const pendingMarksByCode = new Map<string, Array<() => Promise<void>>>();
   let crossCount = 0;
   let levelAlertCount = 0;
   let streakAlertCount = 0;
 
-  function appendMessage(code: string, text: string, mark: () => Promise<void>) {
-    const messages = messagesByCode.get(code) ?? [];
-    messages.push(text);
-    messagesByCode.set(code, messages);
+  function appendMessage(code: string, text: string, mark: () => Promise<void>, isCrossMoment = false) {
+    const parts = messagesByCode.get(code) ?? [];
+    parts.push({ text, isCrossMoment });
+    messagesByCode.set(code, parts);
 
     const marks = pendingMarksByCode.get(code) ?? [];
     marks.push(mark);
@@ -136,7 +150,9 @@ export async function processUserAlerts(userId: string, maLines: number[]): Prom
     // MA alerts fire on current state (站上/低於), not just the crossing moment — re-evaluated
     // every run, so as long as the condition still holds on a new trading day (a new priceDate),
     // it fires again, the same way the level/streak checks below already behave. The per-day dedup
-    // key still blocks re-firing twice for the *same* priceDate.
+    // key still blocks re-firing twice for the *same* priceDate. Separately, comparing against
+    // yesterday's snapshot (prevMaSnapshot) tells a genuine crossing moment (side flipped) from
+    // just persisting on the same side — surfaced as `isCrossMoment` for the 通知 page's outline.
     if (result.priceDate) {
       const priceDate = result.priceDate;
       for (const snap of result.maSnapshot) {
@@ -146,8 +162,15 @@ export async function processUserAlerts(userId: string, maLines: number[]): Prom
 
         const already = await wasAlreadyAlerted(userId, result.code, snap.ma, direction, priceDate);
         if (already) continue;
-        appendMessage(result.code, `${direction === "up" ? "站上" : "低於"} ${MA_LABEL[snap.ma]}`, () =>
-          markAlerted(userId, result.code, snap.ma, direction, priceDate),
+
+        const prevSnap = result.prevMaSnapshot.find((p) => p.ma === snap.ma);
+        const isCrossMoment = prevSnap ? prevSnap.above !== snap.above : false;
+
+        appendMessage(
+          result.code,
+          `${direction === "up" ? "站上" : "低於"} ${MA_LABEL[snap.ma]}`,
+          () => markAlerted(userId, result.code, snap.ma, direction, priceDate),
+          isCrossMoment,
         );
         crossCount++;
       }

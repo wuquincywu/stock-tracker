@@ -154,7 +154,7 @@ export default async function StockDetailPage({ params }: { params: Promise<{ co
                 s.above ? "bg-red-500/15 text-red-300" : "bg-emerald-500/15 text-emerald-300"
               }`}
             >
-              MA{s.ma} {s.value.toFixed(1)} · {s.above ? "站上" : "低於"}
+              {s.above ? "站上" : "低於"}MA{s.ma}
             </span>
           ))}
         </div>

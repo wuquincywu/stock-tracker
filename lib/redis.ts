@@ -9,6 +9,7 @@ import type {
   InstitutionalRow,
   MaAlertKey,
   MaLine,
+  NotificationPart,
   PriceRow,
   PushSubscriptionRecord,
   StreakDirection,
@@ -379,7 +380,7 @@ export interface DailyNotificationItem {
   name: string;
   /** Kept as separate parts (rather than pre-joined) so the 通知 page can color each one by
    * buy/sell (紅/綠) individually instead of rendering one flat-colored string. */
-  parts: string[];
+  parts: NotificationPart[];
 }
 
 const NOTIFICATIONS_TTL_SECONDS = 30 * 24 * 60 * 60; // one-off daily record, not routine cache — keep a month of history

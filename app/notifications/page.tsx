@@ -5,11 +5,11 @@ import { getCurrentUser } from "@/lib/users";
 import ClearAppBadge from "@/components/ClearAppBadge";
 import WatchlistTabs from "@/components/WatchlistTabs";
 
-/** 買進／站上 = 紅 (bullish, matches this app's price-up/buy color elsewhere); 賣出／跌破 = 綠
+/** 買進／站上 = 紅 (bullish, matches this app's price-up/buy color elsewhere); 賣出／低於 = 綠
  * (bearish); anything else (e.g. 平盤) stays neutral. */
-function partColor(part: string): string {
-  if (part.includes("買") || part.includes("站上")) return "text-red-400";
-  if (part.includes("賣") || part.includes("跌破")) return "text-emerald-400";
+function partColor(text: string): string {
+  if (text.includes("買") || text.includes("站上")) return "text-red-400";
+  if (text.includes("賣") || text.includes("低於")) return "text-emerald-400";
   return "text-zinc-400";
 }
 
@@ -50,11 +50,17 @@ export default async function NotificationsPage() {
               <p className="mb-1 text-sm font-medium text-zinc-100">
                 {item.code} {item.name}
               </p>
-              <p className="text-sm">
+              <p className="flex flex-wrap items-center gap-x-1 text-sm">
                 {item.parts.map((part, i) => (
-                  <span key={part}>
+                  <span key={part.text} className="flex items-center gap-1">
                     {i > 0 && <span className="text-zinc-600">、</span>}
-                    <span className={partColor(part)}>{part}</span>
+                    <span
+                      className={`${partColor(part.text)}${
+                        part.isCrossMoment ? " rounded border border-current px-1.5 py-0.5" : ""
+                      }`}
+                    >
+                      {part.text}
+                    </span>
                   </span>
                 ))}
               </p>
