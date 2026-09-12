@@ -166,7 +166,7 @@ export async function GET(req: NextRequest) {
     const items = [...messagesByCode.entries()].map(([code, parts]) => ({
       code,
       name: nameByCode.get(code) ?? code,
-      message: parts.join("、"),
+      parts,
     }));
     const today = taipeiDateString();
     await setDailyNotifications(today, items);

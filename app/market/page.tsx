@@ -1,5 +1,5 @@
 import { getAllMarketCards } from "@/lib/marketdata";
-import { getWatchlist } from "@/lib/redis";
+import { getWatchlist, hasUnreadNotifications } from "@/lib/redis";
 import MarketOverviewClient from "@/components/MarketOverviewClient";
 import WatchlistTabs from "@/components/WatchlistTabs";
 import type { WatchlistCardData } from "@/lib/types";
@@ -17,13 +17,19 @@ export default async function MarketPage() {
   let initialCards: WatchlistCardData[] = [];
   let initialTotal = 0;
   let trackedCodes: string[] = [];
+  let unread = false;
 
   try {
-    const [allCards, watchlist] = await Promise.all([getAllMarketCards(), getWatchlist()]);
+    const [allCards, watchlist, unreadResult] = await Promise.all([
+      getAllMarketCards(),
+      getWatchlist(),
+      hasUnreadNotifications(),
+    ]);
     trackedCodes = watchlist.map((w) => w.code);
     const sorted = [...allCards].sort((a, b) => netOf(b) - netOf(a));
     initialTotal = sorted.length;
     initialCards = sorted.slice(0, PAGE_SIZE);
+    unread = unreadResult;
   } catch {
     // fall through to the empty-state below
   }
@@ -31,7 +37,7 @@ export default async function MarketPage() {
   return (
     <div className="mx-auto max-w-xl px-4 pb-24 pt-6">
       <div className="mb-4">
-        <WatchlistTabs active="all" />
+        <WatchlistTabs active="all" hasUnreadNotifications={unread} />
       </div>
       <p className="mb-6 text-sm text-zinc-500">
         全市場上市＋上櫃股票，顯示方式跟已追蹤股票一致。部分股票的歷史資料仍在補齊中，補齊前只會顯示部分徽章。

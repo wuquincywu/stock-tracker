@@ -1,4 +1,5 @@
 import { Redis } from "@upstash/redis";
+import { taipeiDateString } from "./date";
 import type { StockDirectoryEntry } from "./finmind";
 import type {
   AlertConfig,
@@ -328,7 +329,9 @@ export async function getStoredInstitutionalHistoryBulk(codes: string[]): Promis
 export interface DailyNotificationItem {
   code: string;
   name: string;
-  message: string;
+  /** Kept as separate parts (rather than pre-joined) so the 通知 page can color each one by
+   * buy/sell (紅/綠) individually instead of rendering one flat-colored string. */
+  parts: string[];
 }
 
 const NOTIFICATIONS_TTL_SECONDS = 30 * 24 * 60 * 60; // one-off daily record, not routine cache — keep a month of history
@@ -344,4 +347,24 @@ export async function setDailyNotifications(date: string, items: DailyNotificati
 export async function getDailyNotifications(date: string): Promise<DailyNotificationItem[]> {
   const raw = await redis.get<DailyNotificationItem[]>(notificationsKey(date));
   return Array.isArray(raw) ? raw : [];
+}
+
+const NOTIFICATIONS_READ_KEY = "notifications:lastRead";
+
+/** The most recent date (YYYY-MM-DD, Taipei calendar) the user has opened the 通知 page. */
+export async function getLastReadNotificationDate(): Promise<string | null> {
+  const raw = await redis.get<string>(NOTIFICATIONS_READ_KEY);
+  return typeof raw === "string" ? raw : null;
+}
+
+export async function markNotificationsRead(date: string): Promise<void> {
+  await redis.set(NOTIFICATIONS_READ_KEY, date);
+}
+
+/** Whether today's notifications (if any) haven't been opened yet — drives the red-dot badge on
+ * the 通知 tab and the PWA app-icon badge. */
+export async function hasUnreadNotifications(): Promise<boolean> {
+  const today = taipeiDateString();
+  const [items, lastRead] = await Promise.all([getDailyNotifications(today), getLastReadNotificationDate()]);
+  return items.length > 0 && lastRead !== today;
 }

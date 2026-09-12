@@ -6,7 +6,7 @@ import {
   latestMaSnapshot,
 } from "@/lib/indicators";
 import { getInstitutionalSeries, getPriceSeries } from "@/lib/marketdata";
-import { DEFAULT_CHART_MONTHS, getChartMonths, getMaLines, getWatchlist } from "@/lib/redis";
+import { DEFAULT_CHART_MONTHS, getChartMonths, getMaLines, getWatchlist, hasUnreadNotifications } from "@/lib/redis";
 import type { InstitutionalRow, MaLine, WatchlistEntry } from "@/lib/types";
 import WatchlistClient, { type WatchlistCardData } from "@/components/WatchlistClient";
 import WatchlistTabs from "@/components/WatchlistTabs";
@@ -67,8 +67,14 @@ export default async function Home() {
   let watchlist: WatchlistEntry[] = [];
   let chartMonths = DEFAULT_CHART_MONTHS;
   let maLines: MaLine[] = [5, 20, 60];
+  let unread = false;
   try {
-    [watchlist, chartMonths, maLines] = await Promise.all([getWatchlist(), getChartMonths(), getMaLines()]);
+    [watchlist, chartMonths, maLines, unread] = await Promise.all([
+      getWatchlist(),
+      getChartMonths(),
+      getMaLines(),
+      hasUnreadNotifications(),
+    ]);
   } catch {
     watchlist = [];
   }
@@ -82,7 +88,7 @@ export default async function Home() {
   return (
     <div className="mx-auto max-w-xl px-4 pb-24 pt-6">
       <div className="mb-4">
-        <WatchlistTabs active="tracked" />
+        <WatchlistTabs active="tracked" hasUnreadNotifications={unread} />
       </div>
       <WatchlistClient initialCards={cards} dataDate={dataDate} />
     </div>

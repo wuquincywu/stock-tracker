@@ -15,12 +15,18 @@ self.addEventListener("push", (event) => {
   }
 
   event.waitUntil(
-    self.registration.showNotification(payload.title, {
-      body: payload.body,
-      icon: "/icons/icon-192.png",
-      badge: "/icons/icon-192.png",
-      data: { url: payload.url },
-    }),
+    Promise.all([
+      self.registration.showNotification(payload.title, {
+        body: payload.body,
+        icon: "/icons/icon-192.png",
+        badge: "/icons/icon-192.png",
+        data: { url: payload.url },
+      }),
+      // PWA app-icon red dot — supported from a service worker per the Badging API spec, so this
+      // works even with no page open. Not an exact unread count, just "you have something new";
+      // cleared by ClearAppBadge.tsx when the 通知 page is actually opened.
+      self.setAppBadge ? self.setAppBadge(1).catch(() => {}) : Promise.resolve(),
+    ]),
   );
 });
 
