@@ -123,17 +123,17 @@ export async function processUserAlerts(userId: string, maLines: number[]): Prom
   let levelAlertCount = 0;
   let streakAlertCount = 0;
 
-  function appendMessage(code: string, text: string, isCrossMoment = false) {
+  function appendMessage(code: string, text: string, highlight = false) {
     const parts = messagesByCode.get(code) ?? [];
-    parts.push({ text, isCrossMoment });
+    parts.push({ text, highlight });
     messagesByCode.set(code, parts);
   }
 
   for (const result of results) {
     // MA alerts fire on current state (站上/低於), not just the crossing moment — comparing
     // against yesterday's snapshot (prevMaSnapshot) tells a genuine crossing moment (side flipped)
-    // from just persisting on the same side, surfaced as `isCrossMoment` for the 通知 page's
-    // outline, but both cases notify.
+    // from just persisting on the same side, which is what actually earns the outline highlight;
+    // both cases notify either way.
     if (result.priceDate) {
       for (const snap of result.maSnapshot) {
         const direction: CrossDirection = snap.above ? "up" : "down";
@@ -160,9 +160,12 @@ export async function processUserAlerts(userId: string, maLines: number[]): Prom
       const streak = result.streaks[category];
       if (threshold <= 0 || !streak || streak.length < threshold) continue;
 
+      // Always highlighted — unlike MA's above/below state (which can sit unchanged for days), the
+      // streak length itself is a new fact every day it continues (day 5 is different from day 4).
       appendMessage(
         result.code,
         `${INSTITUTIONAL_CATEGORY_LABEL[category]}連${streak.length}${streak.direction === "buy" ? "買" : "賣"}`,
+        true,
       );
       streakAlertCount++;
     }

@@ -56,7 +56,7 @@ export default async function NotificationsPage() {
                     {i > 0 && <span className="text-zinc-600">、</span>}
                     <span
                       className={`${partColor(part.text)}${
-                        part.isCrossMoment ? " rounded border border-current px-1.5 py-0.5" : ""
+                        part.highlight ? " rounded border border-current px-1.5 py-0.5" : ""
                       }`}
                     >
                       {part.text}

@@ -112,10 +112,12 @@ export interface MaSnapshot {
 
 export interface NotificationPart {
   text: string;
-  /** True only for an MA alert whose direction actually flipped today (a genuine crossing moment,
-   * not just "still the same side as yesterday") — drives an outline highlight on the 通知 page.
-   * Always false for 法人分級/連續買賣 parts, which don't have a "crossing" concept. */
-  isCrossMoment: boolean;
+  /** Drives an outline highlight on the 通知 page for a part that reports something freshly true
+   * right now, as opposed to an unchanged, ongoing state. True for: an MA alert whose direction
+   * actually flipped today (not just "still the same side as yesterday"); every 連續買賣 streak
+   * part, since the streak length itself is a new fact each day it continues. False for 法人分級,
+   * whose category (大買/小賣/...) can repeat identically across days without anything new. */
+  highlight: boolean;
 }
 
 /** The rich per-stock card shown on both the watchlist ("已追蹤股票") and market browse ("所有股票") pages. */
