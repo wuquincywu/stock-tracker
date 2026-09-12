@@ -156,22 +156,29 @@ export async function GET(req: NextRequest) {
   let pruned = 0;
   let failed = 0;
 
-  for (const [code, parts] of messagesByCode) {
-    const name = nameByCode.get(code) ?? code;
-    try {
-      const result = await broadcastPush({
-        title: `${code} ${name}`,
-        body: parts.join("、"),
-        url: `/stock/${code}`,
-      });
-      sent += result.sent;
-      pruned += result.pruned;
-      failed += result.failed;
+  // One push for the whole run instead of one per stock — a day with several stocks triggering
+  // at once used to mean several separate notifications; this bundles them into a single
+  // notification with one paragraph per stock, e.g.:
+  //   2330 台積電
+  //   站上 MA20、法人大買、外資連5買
+  //
+  //   2454 聯發科
+  //   站上 MA60、法人大賣、投信連5買、外資連5賣
+  if (messagesByCode.size > 0) {
+    const body = [...messagesByCode.entries()]
+      .map(([code, parts]) => `${code} ${nameByCode.get(code) ?? code}\n${parts.join("、")}`)
+      .join("\n\n");
 
-      const marks = pendingMarksByCode.get(code) ?? [];
-      await Promise.all(marks.map((mark) => mark()));
+    try {
+      const result = await broadcastPush({ title: "股票追蹤提醒", body, url: "/" });
+      sent = result.sent;
+      pruned = result.pruned;
+      failed = result.failed;
+
+      const allMarks = [...pendingMarksByCode.values()].flat();
+      await Promise.all(allMarks.map((mark) => mark()));
     } catch (err) {
-      console.error(`[check-alerts] push failed for ${code}, leaving dedup unmarked for retry:`, err);
+      console.error("[check-alerts] combined push failed, leaving dedup unmarked for retry:", err);
     }
   }
 
