@@ -13,7 +13,9 @@ import {
   getStoredPriceHistoryBulk,
   getStoredShareholderConcentrationBulk,
   isHistoryFresh,
+  isStockDirectoryFresh,
   markHistoryFresh,
+  markStockDirectoryFresh,
   mergeStoredInstitutionalHistory,
   mergeStoredPriceHistory,
   mergeStoredShareholderConcentration,
@@ -183,8 +185,18 @@ const SEARCH_RESULT_LIMIT = 8;
  * warrant-free-or-filtered) rather than FinMind's bulk TaiwanStockInfo endpoint — that endpoint
  * turned out to be throttled far more aggressively than FinMind's per-stock endpoints (a single
  * "get everything" call kept getting rejected long after per-stock calls had recovered), making it
- * an unreliable base for something the whole app depends on. Falls back to FinMind only if BOTH
- * official sources fail (e.g. a holiday with no daily quotes published yet).
+ * an unreliable base for something the whole app depends on.
+ *
+ * Falls back to FinMind **per market**, not only when both fail — a real incident showed why
+ * this matters: TPEX's own endpoint started truncating its response mid-stream (a connection
+ * reset partway through the body, not an HTTP error status, so fetchWithRetry's retries didn't
+ * help either) while TWSE's kept working fine. With the old "only fall back if BOTH are empty"
+ * check, that silently produced a directory with TWSE stocks only — 所有股票, search, and this
+ * app's other free whole-market data sources (T86 market-wide institutional backfill, TDCC
+ * big-holder concentration) all filter against this directory, so losing an entire market from it
+ * doesn't fail loudly, it just makes every TPEX stock invisible to those features. Falling back
+ * independently for whichever market's own source came back empty keeps one market's outage from
+ * taking out the other's directory coverage.
  */
 async function fetchStockDirectory(): Promise<StockDirectoryEntry[]> {
   const [twseRows, tpexRows] = await Promise.all([
@@ -198,23 +210,51 @@ async function fetchStockDirectory(): Promise<StockDirectoryEntry[]> {
     }),
   ]);
 
-  if (twseRows.length === 0 && tpexRows.length === 0) {
-    return finmind.getAllStocks();
-  }
-
   const byCode = new Map<string, StockDirectoryEntry>();
   for (const r of twseRows) byCode.set(r.code, { code: r.code, name: r.name, market: "TWSE" });
   for (const r of tpexRows) byCode.set(r.code, { code: r.code, name: r.name, market: "TPEX" });
+
+  if (twseRows.length === 0 || tpexRows.length === 0) {
+    try {
+      const finmindAll = await finmind.getAllStocks();
+      if (twseRows.length === 0) {
+        for (const r of finmindAll) if (r.market === "TWSE") byCode.set(r.code, r);
+      }
+      if (tpexRows.length === 0) {
+        for (const r of finmindAll) if (r.market === "TPEX") byCode.set(r.code, r);
+      }
+    } catch (err) {
+      console.error("[fetchStockDirectory] FinMind per-market fallback failed:", err);
+    }
+  }
+
   return [...byCode.values()];
 }
 
+/**
+ * Reads the stored directory and, once a day, refreshes it — but by merging the fresh fetch INTO
+ * the stored one (fresh entries overwrite matching codes; anything fresh didn't cover is left
+ * untouched), never by replacing the stored directory outright. See setCachedStockDirectory's doc
+ * comment for why a straight replace is dangerous: one market's source failing shouldn't blank that
+ * market out of the app. The tradeoff is that a genuinely delisted stock lingers in the directory
+ * rather than disappearing the moment it stops appearing in fresh data — acceptable; the failure
+ * mode this avoids (an entire market vanishing from search/所有股票/every free whole-market
+ * feature that filters against this directory) is far worse than a stale entry or two.
+ */
 export async function getStockDirectory(): Promise<StockDirectoryEntry[]> {
-  const cached = await getCachedStockDirectory();
-  if (cached) return cached;
+  const stored = await getCachedStockDirectory();
+  if (stored && (await isStockDirectoryFresh())) return stored;
 
-  const fresh = await fetchStockDirectory();
-  await setCachedStockDirectory(fresh);
-  return fresh;
+  const fetched = await fetchStockDirectory();
+  const byCode = new Map((stored ?? []).map((e) => [e.code, e]));
+  for (const entry of fetched) byCode.set(entry.code, entry);
+  const merged = [...byCode.values()];
+
+  if (merged.length > 0) {
+    await setCachedStockDirectory(merged);
+    await markStockDirectoryFresh();
+  }
+  return merged;
 }
 
 /**

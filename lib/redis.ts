@@ -24,6 +24,7 @@ const redis = Redis.fromEnv();
 const KEYS = {
   maLines: "config:maLines",
   stockDirectory: "cache:stockDirectory",
+  stockDirectoryFreshMarker: "cache:stockDirectory:fresh",
   marketCardsChunkCount: "cache:marketCards:count",
   users: "users:list",
   cronStatus: "status:cron:checkAlerts",
@@ -214,13 +215,31 @@ export async function setChartMonths(userId: string, months: number): Promise<vo
   await redis.set(chartMonthsKey(userId), clampChartMonths(months));
 }
 
+// Stored WITHOUT a TTL — this used to expire after a day and get unconditionally overwritten by
+// whatever the next fetch produced, even if that fetch came back sparse (a real incident: TPEX's
+// own endpoint started truncating its response mid-stream, so a routine cache-expiry refresh
+// silently replaced a complete directory with a TWSE-only one, and the old, good copy was already
+// gone — Redis doesn't keep an expired key around to fall back to). Now the directory persists
+// indefinitely and getStockDirectory (lib/marketdata.ts) merges each refresh into it instead of
+// replacing it outright, using `isStockDirectoryFresh` below (which DOES carry the old TTL) purely
+// to decide whether it's time to attempt a refresh — a failed or partial one can then only ever add
+// to or update the stored directory, never blank out an entire market from it.
 export async function getCachedStockDirectory(): Promise<StockDirectoryEntry[] | null> {
   const raw = await redis.get<StockDirectoryEntry[]>(KEYS.stockDirectory);
   return Array.isArray(raw) && raw.length > 0 ? raw : null;
 }
 
 export async function setCachedStockDirectory(entries: StockDirectoryEntry[]): Promise<void> {
-  await redis.set(KEYS.stockDirectory, entries, { ex: STOCK_DIRECTORY_TTL_SECONDS });
+  await redis.set(KEYS.stockDirectory, entries);
+}
+
+export async function isStockDirectoryFresh(): Promise<boolean> {
+  const marker = await redis.get(KEYS.stockDirectoryFreshMarker);
+  return marker !== null;
+}
+
+export async function markStockDirectoryFresh(): Promise<void> {
+  await redis.set(KEYS.stockDirectoryFreshMarker, 1, { ex: STOCK_DIRECTORY_TTL_SECONDS });
 }
 
 /**
