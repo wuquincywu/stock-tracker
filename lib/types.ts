@@ -1,5 +1,7 @@
 export type Market = "TWSE" | "TPEX";
 
+export const ALL_MARKETS: Market[] = ["TWSE", "TPEX"];
+
 export interface WatchlistEntry {
   code: string;
   name: string;
@@ -51,6 +53,11 @@ export interface PushSubscriptionRecord {
 }
 
 export type InstitutionalLevel = "big_sell" | "small_sell" | "flat" | "small_buy" | "big_buy";
+
+/** Canonical 大賣→大買 display/validation order — the single source of truth for every place
+ * that needs "all valid levels" (used to be redefined per-file: lib/redis.ts, the market API
+ * route, and both filter-panel client components each had their own copy). */
+export const INSTITUTIONAL_LEVEL_ORDER: InstitutionalLevel[] = ["big_sell", "small_sell", "flat", "small_buy", "big_buy"];
 
 export const INSTITUTIONAL_LEVEL_LABEL: Record<InstitutionalLevel, string> = {
   big_sell: "大賣",

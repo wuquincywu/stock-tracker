@@ -14,7 +14,7 @@ import type {
   WatchlistCardData,
   WatchlistEntry,
 } from "./types";
-import { ALL_MA_ALERT_KEYS, INSTITUTIONAL_CATEGORY_ORDER } from "./types";
+import { ALL_MA_ALERT_KEYS, INSTITUTIONAL_CATEGORY_ORDER, INSTITUTIONAL_LEVEL_ORDER } from "./types";
 
 const redis = Redis.fromEnv();
 
@@ -116,8 +116,6 @@ export async function getMaLines(): Promise<MaLine[]> {
   return parsed.length > 0 ? parsed : DEFAULT_MA_LINES;
 }
 
-const ALL_LEVELS: InstitutionalLevel[] = ["big_sell", "small_sell", "flat", "small_buy", "big_buy"];
-
 /** Reads the per-category thresholds, migrating the old single-`streakThreshold` shape (合計 only) if found. */
 function parseStreakThresholds(raw: Record<string, unknown>): Record<InstitutionalCategory, number> {
   const result: Record<InstitutionalCategory, number> = { foreign: 0, trust: 0, dealer: 0, combined: 0 };
@@ -152,13 +150,13 @@ export async function getAlertConfig(userId: string): Promise<AlertConfig> {
   const raw = await redis.get<Record<string, unknown>>(alertConfigKey(userId));
   if (!raw) return DEFAULT_ALERT_CONFIG;
   const levels = Array.isArray(raw.levels)
-    ? (raw.levels as InstitutionalLevel[]).filter((l) => ALL_LEVELS.includes(l))
+    ? (raw.levels as InstitutionalLevel[]).filter((l) => INSTITUTIONAL_LEVEL_ORDER.includes(l))
     : [];
   return { levels, streakThresholds: parseStreakThresholds(raw), maAlerts: parseMaAlerts(raw) };
 }
 
 export async function setAlertConfig(userId: string, config: AlertConfig): Promise<void> {
-  const levels = config.levels.filter((l) => ALL_LEVELS.includes(l));
+  const levels = config.levels.filter((l) => INSTITUTIONAL_LEVEL_ORDER.includes(l));
   const streakThresholds: Record<InstitutionalCategory, number> = { foreign: 0, trust: 0, dealer: 0, combined: 0 };
   for (const category of INSTITUTIONAL_CATEGORY_ORDER) {
     const value = config.streakThresholds?.[category];
@@ -341,6 +339,37 @@ export async function setDailyNotifications(userId: string, date: string, items:
 export async function getDailyNotifications(userId: string, date: string): Promise<DailyNotificationItem[]> {
   const raw = await redis.get<DailyNotificationItem[]>(notificationsKey(userId, date));
   return Array.isArray(raw) ? raw : [];
+}
+
+export interface DailyNotificationGroup {
+  date: string;
+  items: DailyNotificationItem[];
+}
+
+/**
+ * Notification history for the past `days` calendar days (Taipei calendar, most-recent-first),
+ * skipping any day with nothing recorded (weekend/holiday, or a day nothing triggered). The dates
+ * are computed directly rather than discovered via Redis KEYS/SCAN — NOTIFICATIONS_TTL_SECONDS
+ * already bounds how far back a record can exist, so "today back to N days ago" is a fixed,
+ * cheap-to-compute key list — then read in one chunked MGET (mgetChunked, used the same way by
+ * getStoredPriceHistoryBulk above) instead of one round-trip per day.
+ */
+export async function getNotificationHistory(userId: string, days = 30): Promise<DailyNotificationGroup[]> {
+  const now = new Date();
+  const dates = Array.from({ length: days }, (_, i) => {
+    const d = new Date(now);
+    d.setDate(d.getDate() - i);
+    return taipeiDateString(d);
+  });
+
+  const values = await mgetChunked<DailyNotificationItem[]>(dates.map((date) => notificationsKey(userId, date)));
+
+  const groups: DailyNotificationGroup[] = [];
+  dates.forEach((date, i) => {
+    const items = values[i];
+    if (Array.isArray(items) && items.length > 0) groups.push({ date, items });
+  });
+  return groups;
 }
 
 function notificationsReadKey(userId: string): string {

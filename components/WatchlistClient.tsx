@@ -1,26 +1,16 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { Suspense, useMemo, useState } from "react";
+import CardFilterPanel from "@/components/CardFilterPanel";
 import StockSearchInput from "@/components/StockSearchInput";
+import { useCardFilterUrl } from "@/components/useCardFilterUrl";
 import WatchlistCard, { type CardHighlight, type WatchlistCardData } from "@/components/WatchlistCard";
-import {
-  INSTITUTIONAL_CATEGORY_LABEL,
-  INSTITUTIONAL_CATEGORY_ORDER,
-  INSTITUTIONAL_LEVEL_LABEL,
-  MA_LINE_ORDER,
-} from "@/lib/types";
-import type { InstitutionalCategory, InstitutionalLevel, MaLine, Market, StreakDirection } from "@/lib/types";
+import { isFilterActive, isStreakFilterActive, matchesFilters, sortCards } from "@/lib/cardFilters";
 
 export type { WatchlistCardData } from "@/components/WatchlistCard";
 
-const LEVEL_ORDER: InstitutionalLevel[] = ["big_sell", "small_sell", "flat", "small_buy", "big_buy"];
-const MARKET_ORDER: Market[] = ["TWSE", "TPEX"];
-const MARKET_LABEL: Record<Market, string> = { TWSE: "上市", TPEX: "上櫃" };
-type StreakFilterDirection = StreakDirection | "any";
-type MaFilterDirection = "above" | "below";
-
-export default function WatchlistClient({
+function WatchlistFilterableList({
   initialCards,
   dataDate,
 }: {
@@ -30,87 +20,19 @@ export default function WatchlistClient({
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const { state, setState, reset } = useCardFilterUrl();
 
-  const [filterLevels, setFilterLevels] = useState<Set<InstitutionalLevel>>(new Set());
-  const [filterMarkets, setFilterMarkets] = useState<Set<Market>>(new Set());
-  const [streakCategory, setStreakCategory] = useState<InstitutionalCategory>("combined");
-  const [streakDirection, setStreakDirection] = useState<StreakFilterDirection>("any");
-  const [minStreak, setMinStreak] = useState(0);
-  const [maFilterLine, setMaFilterLine] = useState<MaLine | "any">("any");
-  const [maFilterDirection, setMaFilterDirection] = useState<MaFilterDirection>("above");
-
-  const filterActive =
-    filterLevels.size > 0 ||
-    filterMarkets.size > 0 ||
-    streakDirection !== "any" ||
-    minStreak > 0 ||
-    maFilterLine !== "any";
-  const streakFilterActive = streakDirection !== "any" || minStreak > 0;
-  const maFilterActive = maFilterLine !== "any";
-  const selectClass = (active: boolean) =>
-    `rounded-md border px-2 py-1 text-xs outline-none focus:border-emerald-500 ${
-      active ? "border-emerald-500 bg-emerald-500/10 text-emerald-300" : "border-zinc-700 bg-zinc-950 text-zinc-400"
-    }`;
+  const filterActive = isFilterActive(state);
   const cardHighlight: CardHighlight = {
-    levels: filterLevels,
-    streakCategory: streakFilterActive ? streakCategory : null,
-    maLine: maFilterLine !== "any" ? maFilterLine : null,
+    levels: state.levels,
+    streakCategory: isStreakFilterActive(state) ? state.streakCategory : null,
+    maLine: state.maLine !== "any" ? state.maLine : null,
   };
 
-  function toggleFilterLevel(level: InstitutionalLevel) {
-    setFilterLevels((prev) => {
-      const next = new Set(prev);
-      if (next.has(level)) next.delete(level);
-      else next.add(level);
-      return next;
-    });
-  }
-
-  function toggleFilterMarket(market: Market) {
-    setFilterMarkets((prev) => {
-      const next = new Set(prev);
-      if (next.has(market)) next.delete(market);
-      else next.add(market);
-      return next;
-    });
-  }
-
-  function resetFilters() {
-    setFilterLevels(new Set());
-    setFilterMarkets(new Set());
-    setStreakCategory("combined");
-    setStreakDirection("any");
-    setMinStreak(0);
-    setMaFilterLine("any");
-    setMaFilterDirection("above");
-  }
-
   const visibleCards = useMemo(() => {
-    if (!filterActive) return initialCards;
-    return initialCards.filter((card) => {
-      if (filterMarkets.size > 0 && !filterMarkets.has(card.market)) return false;
-      if (filterLevels.size > 0 && (!card.level || !filterLevels.has(card.level))) return false;
-      const streak = card.streaks[streakCategory];
-      if (streakDirection !== "any" && streak?.direction !== streakDirection) return false;
-      if (minStreak > 0 && (!streak || streak.length < minStreak)) return false;
-      if (maFilterLine !== "any") {
-        const snapshot = card.maSnapshot.find((s) => s.ma === maFilterLine);
-        if (!snapshot) return false;
-        if (snapshot.above !== (maFilterDirection === "above")) return false;
-      }
-      return true;
-    });
-  }, [
-    initialCards,
-    filterActive,
-    filterLevels,
-    filterMarkets,
-    streakCategory,
-    streakDirection,
-    minStreak,
-    maFilterLine,
-    maFilterDirection,
-  ]);
+    const filtered = filterActive ? initialCards.filter((card) => matchesFilters(card, state)) : initialCards;
+    return sortCards(filtered, state.sort, state.dir, state.streakCategory);
+  }, [initialCards, filterActive, state]);
 
   async function addStock(code: string) {
     setSubmitting(true);
@@ -148,106 +70,13 @@ export default function WatchlistClient({
       )}
 
       {initialCards.length > 0 && (
-        <div className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-3">
-          <div className="flex flex-wrap gap-1.5">
-            {MARKET_ORDER.map((market) => (
-              <button
-                key={market}
-                type="button"
-                onClick={() => toggleFilterMarket(market)}
-                className={`rounded-full border px-2.5 py-1 text-xs font-medium transition-colors ${
-                  filterMarkets.has(market)
-                    ? "border-emerald-500 bg-emerald-500/15 text-emerald-300"
-                    : "border-zinc-700 text-zinc-400 hover:border-zinc-600"
-                }`}
-              >
-                {MARKET_LABEL[market]}
-              </button>
-            ))}
-          </div>
-
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {LEVEL_ORDER.map((level) => (
-              <button
-                key={level}
-                type="button"
-                onClick={() => toggleFilterLevel(level)}
-                className={`rounded-full border px-2.5 py-1 text-xs font-medium transition-colors ${
-                  filterLevels.has(level)
-                    ? "border-emerald-500 bg-emerald-500/15 text-emerald-300"
-                    : "border-zinc-700 text-zinc-400 hover:border-zinc-600"
-                }`}
-              >
-                {INSTITUTIONAL_LEVEL_LABEL[level]}
-              </button>
-            ))}
-          </div>
-
-          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-zinc-400">
-            <select
-              value={streakCategory}
-              onChange={(e) => setStreakCategory(e.target.value as InstitutionalCategory)}
-              className={selectClass(streakFilterActive)}
-            >
-              {INSTITUTIONAL_CATEGORY_ORDER.map((category) => (
-                <option key={category} value={category}>
-                  {INSTITUTIONAL_CATEGORY_LABEL[category]}
-                </option>
-              ))}
-            </select>
-            <select
-              value={streakDirection}
-              onChange={(e) => setStreakDirection(e.target.value as StreakFilterDirection)}
-              className={selectClass(streakFilterActive)}
-            >
-              <option value="any">連買賣不限</option>
-              <option value="buy">連買</option>
-              <option value="sell">連賣</option>
-            </select>
-            <span>至少</span>
-            <input
-              type="number"
-              min={0}
-              value={minStreak}
-              onChange={(e) => setMinStreak(Math.max(0, Number(e.target.value) || 0))}
-              className={`w-14 ${selectClass(streakFilterActive)}`}
-            />
-            <span>天</span>
-          </div>
-
-          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-zinc-400">
-            <select
-              value={maFilterLine}
-              onChange={(e) => setMaFilterLine(e.target.value === "any" ? "any" : (Number(e.target.value) as MaLine))}
-              className={selectClass(maFilterActive)}
-            >
-              <option value="any">均線不限</option>
-              {MA_LINE_ORDER.map((ma) => (
-                <option key={ma} value={ma}>
-                  MA{ma}
-                </option>
-              ))}
-            </select>
-            <select
-              value={maFilterDirection}
-              onChange={(e) => setMaFilterDirection(e.target.value as MaFilterDirection)}
-              disabled={maFilterLine === "any"}
-              className={`${selectClass(maFilterActive)} disabled:opacity-50`}
-            >
-              <option value="above">站上</option>
-              <option value="below">低於</option>
-            </select>
-
-            <span className="ml-auto text-zinc-600">
-              顯示 {visibleCards.length} / {initialCards.length} 檔
-            </span>
-            {filterActive && (
-              <button type="button" onClick={resetFilters} className="text-zinc-500 hover:text-red-400">
-                清除篩選
-              </button>
-            )}
-          </div>
-        </div>
+        <CardFilterPanel
+          state={state}
+          onChange={setState}
+          onReset={reset}
+          filterActive={filterActive}
+          summary={`顯示 ${visibleCards.length} / ${initialCards.length} 檔`}
+        />
       )}
 
       {initialCards.length > 0 && visibleCards.length === 0 && (
@@ -273,5 +102,20 @@ export default function WatchlistClient({
         ))}
       </ul>
     </div>
+  );
+}
+
+/**
+ * `useCardFilterUrl` reads `useSearchParams()`, which Next requires to sit under a `<Suspense>`
+ * boundary — see components/useCardFilterUrl.ts's doc comment. `fallback={null}` is fine here:
+ * this page is already forced into dynamic rendering (the layout reads the user's identity cookie),
+ * so the real search params are available on the very first server render and this boundary never
+ * actually shows its fallback in practice.
+ */
+export default function WatchlistClient(props: { initialCards: WatchlistCardData[]; dataDate?: string | null }) {
+  return (
+    <Suspense fallback={null}>
+      <WatchlistFilterableList {...props} />
+    </Suspense>
   );
 }

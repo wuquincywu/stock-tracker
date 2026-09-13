@@ -1,25 +1,17 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, Suspense } from "react";
 import { useRouter } from "next/navigation";
+import CardFilterPanel from "@/components/CardFilterPanel";
+import { useCardFilterUrl } from "@/components/useCardFilterUrl";
 import WatchlistCard, { type CardHighlight } from "@/components/WatchlistCard";
 import type { StockOption } from "@/components/StockSearchInput";
-import {
-  INSTITUTIONAL_CATEGORY_LABEL,
-  INSTITUTIONAL_CATEGORY_ORDER,
-  INSTITUTIONAL_LEVEL_LABEL,
-  MA_LINE_ORDER,
-} from "@/lib/types";
-import type { InstitutionalCategory, InstitutionalLevel, MaLine, Market, StreakDirection, WatchlistCardData } from "@/lib/types";
+import { filterStateToSearchParams, isFilterActive, isStreakFilterActive } from "@/lib/cardFilters";
+import type { WatchlistCardData } from "@/lib/types";
 
 const SUGGEST_DEBOUNCE_MS = 250;
-
-const LEVEL_ORDER: InstitutionalLevel[] = ["big_sell", "small_sell", "flat", "small_buy", "big_buy"];
-const MARKET_ORDER: Market[] = ["TWSE", "TPEX"];
-const MARKET_LABEL: Record<Market, string> = { TWSE: "上市", TPEX: "上櫃" };
+const QUERY_COMMIT_DEBOUNCE_MS = 250;
 const PAGE_SIZE = 50;
-type StreakFilterDirection = StreakDirection | "any";
-type MaFilterDirection = "above" | "below";
 
 /** First page, last page, current page ± 1, "…" for the gaps — keeps the pager short even at ~48 pages. */
 function pageNumbers(current: number, total: number): (number | "…")[] {
@@ -35,7 +27,7 @@ function pageNumbers(current: number, total: number): (number | "…")[] {
   return pages;
 }
 
-export default function MarketOverviewClient({
+function MarketOverviewFilterable({
   initialCards,
   initialTotal,
   trackedCodes,
@@ -45,21 +37,22 @@ export default function MarketOverviewClient({
   trackedCodes: string[];
 }) {
   const router = useRouter();
-  const [query, setQuery] = useState("");
-  const [markets, setMarkets] = useState<Set<Market>>(new Set());
-  const [levels, setLevels] = useState<Set<InstitutionalLevel>>(new Set());
-  const [streakCategory, setStreakCategory] = useState<InstitutionalCategory>("combined");
-  const [streakDirection, setStreakDirection] = useState<StreakFilterDirection>("any");
-  const [minStreak, setMinStreak] = useState(0);
-  const [maFilterLine, setMaFilterLine] = useState<MaLine | "any">("any");
-  const [maFilterDirection, setMaFilterDirection] = useState<MaFilterDirection>("above");
-  const [page, setPage] = useState(1);
+  const { state, page, setState, setPage, reset } = useCardFilterUrl();
 
   const [cards, setCards] = useState(initialCards);
   const [total, setTotal] = useState(initialTotal);
   const [loading, setLoading] = useState(false);
   const [tracked, setTracked] = useState<Set<string>>(new Set(trackedCodes));
   const [pendingCode, setPendingCode] = useState<string | null>(null);
+
+  // The text field updates instantly on every keystroke; committing it into `state` (and thus the
+  // URL + /api/market fetch below) is debounced separately, same as the old behavior. This is only
+  // ever written to from user typing, picking a suggestion, or "清除篩選" — not re-synced from
+  // `state.query` when it changes some other way (e.g. the browser back/forward buttons), which
+  // would require either a setState-in-effect or a ref read during render, both of which this
+  // project's lint config forbids. Worst case the box's text and the actually-applied filter
+  // (which does always follow the URL correctly) briefly disagree until the user types again.
+  const [queryInput, setQueryInput] = useState(state.query);
 
   // Autocomplete dropdown for the search box — same UX as StockSearchInput on the watchlist page
   // (type to see matching stocks), except choosing one filters this page's list down to it instead
@@ -69,26 +62,30 @@ export default function MarketOverviewClient({
   const [suggestHighlighted, setSuggestHighlighted] = useState(0);
   const searchContainerRef = useRef<HTMLDivElement>(null);
 
-  const filterActive =
-    markets.size > 0 ||
-    levels.size > 0 ||
-    streakDirection !== "any" ||
-    minStreak > 0 ||
-    maFilterLine !== "any" ||
-    query.trim() !== "";
-  const streakFilterActive = streakDirection !== "any" || minStreak > 0;
-  const maFilterActive = maFilterLine !== "any";
-  const selectClass = (active: boolean) =>
-    `rounded-md border px-2 py-1 text-xs outline-none focus:border-emerald-500 ${
-      active ? "border-emerald-500 bg-emerald-500/10 text-emerald-300" : "border-zinc-700 bg-zinc-950 text-zinc-400"
-    }`;
+  const filterActive = isFilterActive(state);
+  const streakFilterActive = isStreakFilterActive(state);
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const cardHighlight: CardHighlight = {
-    levels,
-    streakCategory: streakFilterActive ? streakCategory : null,
-    maLine: maFilterLine !== "any" ? maFilterLine : null,
+    levels: state.levels,
+    streakCategory: streakFilterActive ? state.streakCategory : null,
+    maLine: state.maLine !== "any" ? state.maLine : null,
   };
 
+  // Commits the debounced query text into the shared filter state (resets to page 1, like any
+  // other filter change).
+  useEffect(() => {
+    if (queryInput === state.query) return;
+    const handle = setTimeout(() => {
+      setState({ ...state, query: queryInput });
+    }, QUERY_COMMIT_DEBOUNCE_MS);
+    return () => clearTimeout(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-run when the debounced text itself changes
+  }, [queryInput]);
+
+  // Fetches the current filtered/sorted/paginated page from the server whenever the URL-backed
+  // filter/sort/page state changes. Skipped on the very first render — the server already computed
+  // a matching initial page from the same URL, so refetching immediately would just repeat that
+  // work (see app/market/page.tsx).
   const isFirstRun = useRef(true);
   useEffect(() => {
     if (isFirstRun.current) {
@@ -96,47 +93,30 @@ export default function MarketOverviewClient({
       return;
     }
     let cancelled = false;
-    const handle = setTimeout(
-      () => {
-        setLoading(true);
-        const params = new URLSearchParams();
-        if (query.trim()) params.set("q", query.trim());
-        if (markets.size > 0) params.set("markets", [...markets].join(","));
-        if (levels.size > 0) params.set("levels", [...levels].join(","));
-        params.set("streakCategory", streakCategory);
-        if (streakDirection !== "any") params.set("streakDirection", streakDirection);
-        if (minStreak > 0) params.set("minStreak", String(minStreak));
-        if (maFilterLine !== "any") {
-          params.set("maLine", String(maFilterLine));
-          params.set("maDirection", maFilterDirection);
-        }
-        params.set("offset", String((page - 1) * PAGE_SIZE));
-        params.set("limit", String(PAGE_SIZE));
+    setLoading(true);
+    const params = filterStateToSearchParams(state, page);
+    params.set("limit", String(PAGE_SIZE));
 
-        fetch(`/api/market?${params.toString()}`)
-          .then((res) => res.json())
-          .then((data) => {
-            if (cancelled) return;
-            setCards(data.cards ?? []);
-            setTotal(data.total ?? 0);
-          })
-          .finally(() => {
-            if (!cancelled) setLoading(false);
-          });
-      },
-      query !== "" ? 250 : 0,
-    );
+    fetch(`/api/market?${params.toString()}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (cancelled) return;
+        setCards(data.cards ?? []);
+        setTotal(data.total ?? 0);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
     return () => {
       cancelled = true;
-      clearTimeout(handle);
     };
-  }, [query, markets, levels, streakCategory, streakDirection, minStreak, maFilterLine, maFilterDirection, page]);
+  }, [state, page]);
 
   // Suggestion dropdown fetch — independent of the filter fetch above (different endpoint, own
-  // debounce), so typing narrows the visible list *and* offers a jump-to-this-stock suggestion.
+  // debounce, reacts to the un-debounced queryInput so it feels instant while typing).
   useEffect(() => {
-    const trimmed = query.trim();
-    if (!trimmed) return; // onChange already clears suggestOptions/suggestOpen when the field empties
+    const trimmed = queryInput.trim();
+    if (!trimmed) return; // the input's onChange already clears suggestOptions/suggestOpen when the field empties
     let cancelled = false;
     const timer = setTimeout(async () => {
       try {
@@ -158,7 +138,7 @@ export default function MarketOverviewClient({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [query]);
+  }, [queryInput]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -171,10 +151,10 @@ export default function MarketOverviewClient({
   }, []);
 
   function selectSuggestion(option: StockOption) {
-    setQuery(option.code);
+    setQueryInput(option.code);
     setSuggestOptions([]);
     setSuggestOpen(false);
-    setPage(1);
+    setState({ ...state, query: option.code });
   }
 
   function handleSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
@@ -193,38 +173,11 @@ export default function MarketOverviewClient({
     }
   }
 
-  function toggleMarket(market: Market) {
-    setMarkets((prev) => {
-      const next = new Set(prev);
-      if (next.has(market)) next.delete(market);
-      else next.add(market);
-      return next;
-    });
-    setPage(1);
-  }
-
-  function toggleLevel(level: InstitutionalLevel) {
-    setLevels((prev) => {
-      const next = new Set(prev);
-      if (next.has(level)) next.delete(level);
-      else next.add(level);
-      return next;
-    });
-    setPage(1);
-  }
-
-  function resetFilters() {
-    setQuery("");
+  function handleResetFilters() {
+    setQueryInput("");
     setSuggestOptions([]);
     setSuggestOpen(false);
-    setMarkets(new Set());
-    setLevels(new Set());
-    setStreakCategory("combined");
-    setStreakDirection("any");
-    setMinStreak(0);
-    setMaFilterLine("any");
-    setMaFilterDirection("above");
-    setPage(1);
+    reset();
   }
 
   async function addStock(code: string) {
@@ -244,15 +197,19 @@ export default function MarketOverviewClient({
     }
   }
 
+  function goToPage(next: number) {
+    setPage(Math.min(totalPages, Math.max(1, next)));
+    window.scrollTo({ top: 0 });
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <div ref={searchContainerRef} className="relative">
         <input
-          value={query}
+          value={queryInput}
           onChange={(e) => {
             const value = e.target.value;
-            setQuery(value);
-            setPage(1);
+            setQueryInput(value);
             if (!value.trim()) {
               setSuggestOptions([]);
               setSuggestOpen(false);
@@ -286,121 +243,13 @@ export default function MarketOverviewClient({
         )}
       </div>
 
-      <div className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-3">
-        <div className="flex flex-wrap items-center gap-1.5">
-          {MARKET_ORDER.map((market) => (
-            <button
-              key={market}
-              type="button"
-              onClick={() => toggleMarket(market)}
-              className={`rounded-full border px-2.5 py-1 text-xs font-medium transition-colors ${
-                markets.has(market)
-                  ? "border-emerald-500 bg-emerald-500/15 text-emerald-300"
-                  : "border-zinc-700 text-zinc-400 hover:border-zinc-600"
-              }`}
-            >
-              {MARKET_LABEL[market]}
-            </button>
-          ))}
-        </div>
-
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {LEVEL_ORDER.map((level) => (
-            <button
-              key={level}
-              type="button"
-              onClick={() => toggleLevel(level)}
-              className={`rounded-full border px-2.5 py-1 text-xs font-medium transition-colors ${
-                levels.has(level)
-                  ? "border-emerald-500 bg-emerald-500/15 text-emerald-300"
-                  : "border-zinc-700 text-zinc-400 hover:border-zinc-600"
-              }`}
-            >
-              {INSTITUTIONAL_LEVEL_LABEL[level]}
-            </button>
-          ))}
-        </div>
-
-        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-zinc-400">
-          <select
-            value={streakCategory}
-            onChange={(e) => {
-              setStreakCategory(e.target.value as InstitutionalCategory);
-              setPage(1);
-            }}
-            className={selectClass(streakFilterActive)}
-          >
-            {INSTITUTIONAL_CATEGORY_ORDER.map((category) => (
-              <option key={category} value={category}>
-                {INSTITUTIONAL_CATEGORY_LABEL[category]}
-              </option>
-            ))}
-          </select>
-          <select
-            value={streakDirection}
-            onChange={(e) => {
-              setStreakDirection(e.target.value as StreakFilterDirection);
-              setPage(1);
-            }}
-            className={selectClass(streakFilterActive)}
-          >
-            <option value="any">連買賣不限</option>
-            <option value="buy">連買</option>
-            <option value="sell">連賣</option>
-          </select>
-          <span>至少</span>
-          <input
-            type="number"
-            min={0}
-            value={minStreak}
-            onChange={(e) => {
-              setMinStreak(Math.max(0, Number(e.target.value) || 0));
-              setPage(1);
-            }}
-            className={`w-14 ${selectClass(streakFilterActive)}`}
-          />
-          <span>天</span>
-        </div>
-
-        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-zinc-400">
-          <select
-            value={maFilterLine}
-            onChange={(e) => {
-              setMaFilterLine(e.target.value === "any" ? "any" : (Number(e.target.value) as MaLine));
-              setPage(1);
-            }}
-            className={selectClass(maFilterActive)}
-          >
-            <option value="any">均線不限</option>
-            {MA_LINE_ORDER.map((ma) => (
-              <option key={ma} value={ma}>
-                MA{ma}
-              </option>
-            ))}
-          </select>
-          <select
-            value={maFilterDirection}
-            onChange={(e) => {
-              setMaFilterDirection(e.target.value as MaFilterDirection);
-              setPage(1);
-            }}
-            disabled={maFilterLine === "any"}
-            className={`${selectClass(maFilterActive)} disabled:opacity-50`}
-          >
-            <option value="above">站上</option>
-            <option value="below">低於</option>
-          </select>
-
-          <span className="ml-auto text-zinc-600">
-            {loading ? "查詢中…" : `共 ${total} 檔 · 第 ${page}/${totalPages} 頁`}
-          </span>
-          {filterActive && (
-            <button type="button" onClick={resetFilters} className="text-zinc-500 hover:text-red-400">
-              清除篩選
-            </button>
-          )}
-        </div>
-      </div>
+      <CardFilterPanel
+        state={state}
+        onChange={setState}
+        onReset={handleResetFilters}
+        filterActive={filterActive}
+        summary={loading ? "查詢中…" : `共 ${total} 檔 · 第 ${page}/${totalPages} 頁`}
+      />
 
       <ul className="flex flex-col gap-3">
         {cards.map((card) => (
@@ -433,10 +282,7 @@ export default function MarketOverviewClient({
         <div className="flex flex-wrap items-center justify-center gap-1.5">
           <button
             type="button"
-            onClick={() => {
-              setPage((p) => Math.max(1, p - 1));
-              window.scrollTo({ top: 0 });
-            }}
+            onClick={() => goToPage(page - 1)}
             disabled={loading || page <= 1}
             className="rounded-md border border-zinc-700 px-2.5 py-1 text-xs text-zinc-400 hover:border-zinc-600 disabled:opacity-40"
           >
@@ -451,10 +297,7 @@ export default function MarketOverviewClient({
               <button
                 key={p}
                 type="button"
-                onClick={() => {
-                  setPage(p);
-                  window.scrollTo({ top: 0 });
-                }}
+                onClick={() => goToPage(p)}
                 disabled={loading}
                 className={`rounded-md border px-2.5 py-1 text-xs font-medium ${
                   p === page
@@ -468,10 +311,7 @@ export default function MarketOverviewClient({
           )}
           <button
             type="button"
-            onClick={() => {
-              setPage((p) => Math.min(totalPages, p + 1));
-              window.scrollTo({ top: 0 });
-            }}
+            onClick={() => goToPage(page + 1)}
             disabled={loading || page >= totalPages}
             className="rounded-md border border-zinc-700 px-2.5 py-1 text-xs text-zinc-400 hover:border-zinc-600 disabled:opacity-40"
           >
@@ -480,5 +320,19 @@ export default function MarketOverviewClient({
         </div>
       )}
     </div>
+  );
+}
+
+/** See WatchlistClient.tsx's identical Suspense wrapper doc comment — useCardFilterUrl needs one,
+ * and this page is force-dynamic (cookie-gated) so the fallback never actually shows. */
+export default function MarketOverviewClient(props: {
+  initialCards: WatchlistCardData[];
+  initialTotal: number;
+  trackedCodes: string[];
+}) {
+  return (
+    <Suspense fallback={null}>
+      <MarketOverviewFilterable {...props} />
+    </Suspense>
   );
 }
