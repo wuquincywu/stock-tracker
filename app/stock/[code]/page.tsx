@@ -6,7 +6,14 @@ import {
   computeInstitutionalStreaks,
   latestMaSnapshot,
 } from "@/lib/indicators";
-import { CHART_CALC_BUFFER_MONTHS, getChartSeries, getInstitutionalSeries, getPriceSeries, lookupStock } from "@/lib/marketdata";
+import {
+  CHART_CALC_BUFFER_MONTHS,
+  getChartSeries,
+  getInstitutionalSeries,
+  getPriceSeries,
+  institutionalDaysForMonths,
+  lookupStock,
+} from "@/lib/marketdata";
 import { MARKET_LABEL } from "@/lib/types";
 import type { PriceRow } from "@/lib/types";
 import { BollingerDetailBadges } from "@/components/BollingerBadges";
@@ -18,8 +25,6 @@ import BackButton from "@/components/ui/BackButton";
 // user pick a wider range interactively instead of this being driven by the global chart-months
 // setting (that setting still governs the watchlist/market cards' calc window, just not this page).
 const DEFAULT_DISPLAY_MONTHS = 3;
-
-const INSTITUTIONAL_HISTORY_DAYS = 40; // enough trading rows for classifyInstitutionalLevel's baseline
 
 function sharesToLots(shares: number): string {
   const lots = shares / 1000;
@@ -60,7 +65,7 @@ export default async function StockDetailPage({ params }: { params: Promise<{ co
   try {
     const [chartSeries, institutionalSeries, badgeSeries] = await Promise.all([
       getChartSeries(code, info.market, DEFAULT_DISPLAY_MONTHS, false),
-      getInstitutionalSeries(code, INSTITUTIONAL_HISTORY_DAYS),
+      getInstitutionalSeries(code, institutionalDaysForMonths(DEFAULT_DISPLAY_MONTHS)),
       // MA/Bollinger badges above the chart need enough trailing history for a correct
       // latest-day read (MA60 needs 60 trading days) regardless of the chart's own display range.
       getPriceSeries(code, DEFAULT_DISPLAY_MONTHS + CHART_CALC_BUFFER_MONTHS),

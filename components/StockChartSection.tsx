@@ -16,7 +16,7 @@ export default function StockChartSection({
   code,
   initialPrices,
   initialBands,
-  institutional,
+  institutional: initialInstitutional,
 }: {
   code: string;
   initialPrices: PriceRow[];
@@ -26,6 +26,11 @@ export default function StockChartSection({
   const [months, setMonths] = useState(3);
   const [prices, setPrices] = useState(initialPrices);
   const [bands, setBands] = useState(initialBands);
+  // Previously stayed fixed at the server-rendered initial value forever — switching to 6/12/24
+  // months widened the price chart but left the 三大法人 histogram stuck at its original ~40-day
+  // window, stranded in a small sliver of the now-much-wider timeline. Now updates alongside
+  // prices/bands on every month-range switch (see /api/stock/[code], which sizes it to match).
+  const [institutional, setInstitutional] = useState(initialInstitutional);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
@@ -40,6 +45,7 @@ export default function StockChartSection({
         setMonths(next);
         setPrices(json.prices);
         setBands(json.bands);
+        setInstitutional(json.institutional);
       } catch {
         setError("資料抓取失敗，請稍後再試一次");
       }

@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { classifyInstitutionalLevel, computeInstitutionalStreaks } from "@/lib/indicators";
-import { getChartSeries, getInstitutionalSeries, lookupStock } from "@/lib/marketdata";
+import { getChartSeries, getInstitutionalSeries, institutionalDaysForMonths, lookupStock } from "@/lib/marketdata";
 import { clampChartMonths, DEFAULT_CHART_MONTHS } from "@/lib/redis";
-
-const INSTITUTIONAL_HISTORY_DAYS = 40; // enough trading rows for classifyInstitutionalLevel's baseline
 
 // Matches the stock detail page's default chart window (see app/stock/[code]/page.tsx and
 // components/StockChartSection.tsx). A request for this many months or fewer is always served
@@ -25,7 +23,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ code
     const months = monthsParam !== null ? clampChartMonths(Number(monthsParam)) : DEFAULT_CHART_MONTHS;
     const [{ prices, bands }, institutional] = await Promise.all([
       getChartSeries(code, info.market, months, months > LIVE_FETCH_THRESHOLD_MONTHS),
-      getInstitutionalSeries(code, INSTITUTIONAL_HISTORY_DAYS),
+      // Sized to match `months` (not a fixed cap) so the institutional bar histogram covers the
+      // same timeline as the price chart it's rendered underneath, however wide that gets.
+      getInstitutionalSeries(code, institutionalDaysForMonths(months)),
     ]);
 
     const level = classifyInstitutionalLevel(institutional);
@@ -37,7 +37,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ code
       market: info.market,
       prices,
       bands,
-      institutional: institutional.slice(-10),
+      institutional,
       level,
       streaks,
     });

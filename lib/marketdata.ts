@@ -157,6 +157,18 @@ export interface ChartSeries {
 // page's MA/Bollinger badges above the chart) can match it without duplicating the number.
 export const CHART_CALC_BUFFER_MONTHS = 3;
 
+// Rough trading-days-per-month conversion used to size the 三大法人 chart history to match
+// whatever price-chart month range is currently selected. Previously the stock detail page and its
+// month-range API both used an unrelated FIXED 40-day cap for institutional data regardless of the
+// requested `months` — so picking "12個月" or "24個月" widened the price chart but left the
+// institutional bar histogram stuck at the same ~40 days, visually stranded in a small sliver of
+// the now-much-wider timeline. The 40-day floor here still covers classifyInstitutionalLevel's own
+// MIN_HISTORY_FOR_LEVEL baseline for a short display range.
+const TRADING_DAYS_PER_MONTH = 22;
+export function institutionalDaysForMonths(months: number): number {
+  return Math.max(40, months * TRADING_DAYS_PER_MONTH);
+}
+
 /**
  * Chart-ready price series + Bollinger bands for the stock detail page's chart and its month-range
  * API (`/api/stock/[code]?months=`). `live: true` uses `refreshPriceSeries` (live-fetches and
