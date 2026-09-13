@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Button from "@/components/ui/Button";
+import { MARKET_LABEL } from "@/lib/types";
 import type { Market } from "@/lib/types";
 
 export interface StockOption {
@@ -141,7 +142,7 @@ export default function StockSearchInput({
                 >
                   <span>{option.name}</span>
                   <span className="text-xs text-zinc-500">
-                    {option.code} · {option.market === "TWSE" ? "上市" : "上櫃"}
+                    {option.code} · {MARKET_LABEL[option.market]}
                   </span>
                 </button>
               </li>

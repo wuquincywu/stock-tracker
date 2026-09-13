@@ -1,4 +1,5 @@
 import { fetchWithRetry, USER_AGENT } from "./httpFetch";
+import type { PriceRow } from "./types";
 
 interface TpexInstiResponse {
   tables?: { fields: string[]; data: string[][] }[];
@@ -96,4 +97,78 @@ export async function getAllSecurities(): Promise<{ code: string; name: string }
     byCode.set(code, { code, name: row.CompanyName });
   }
   return [...byCode.values()];
+}
+
+interface EsbDailyStatisticsRow {
+  Date: string;
+  SecuritiesCompanyCode: string;
+  CompanyName: string;
+  Highest: string;
+  Lowest: string;
+  Average: string;
+  LatestPrice: string;
+  TransactionVolume: string;
+}
+
+/** ESB dates have no separators, e.g. "1150911" (ROC year, no fixed digit count assumed — sliced
+ * from the right instead) -> "2026-09-11". */
+function esbDateToIso(raw: string): string {
+  const day = raw.slice(-2);
+  const month = raw.slice(-4, -2);
+  const year = Number(raw.slice(0, -4)) + 1911;
+  return `${year}-${month}-${day}`;
+}
+
+export interface EmergingQuoteRow {
+  code: string;
+  name: string;
+  price: PriceRow;
+}
+
+/**
+ * One 興櫃股票當日行情表 row -> {code, name, price}. Exported for testing. 興櫃 is a dealer-quoted
+ * market (等殖成交), not order-matched exchange trading — there's no true opening-auction price, so
+ * `open` uses `Average` (加權平均成交價) as the closest available stand-in; only `close`
+ * (LatestPrice) actually feeds this app's MA/Bollinger calculations. Returns null for a row with no
+ * real trade that day (LatestPrice empty).
+ */
+export function parseEmergingQuoteRow(row: EsbDailyStatisticsRow): EmergingQuoteRow | null {
+  if (!row.LatestPrice || row.LatestPrice.trim() === "") return null;
+  const close = parseNumber(row.LatestPrice);
+  return {
+    code: row.SecuritiesCompanyCode,
+    name: row.CompanyName,
+    price: {
+      date: esbDateToIso(row.Date),
+      open: row.Average ? parseNumber(row.Average) : close,
+      high: row.Highest ? parseNumber(row.Highest) : close,
+      low: row.Lowest ? parseNumber(row.Lowest) : close,
+      close,
+      volume: row.TransactionVolume ? parseNumber(row.TransactionVolume) : 0,
+    },
+  };
+}
+
+/**
+ * 興櫃股票當日行情表 — free, unlimited, whole-market-per-call (like TPEX mainboard's own daily
+ * quotes above), but TODAY ONLY: no per-stock date-range query exists for 興櫃 (same limitation as
+ * TDCC's big-holder feed — see lib/tdcc.ts). Doubles as both the price source AND the directory
+ * source for this market, the same dual role getAllSecurities plays for TPEX's mainboard.
+ */
+export async function getEmergingDailyQuotes(): Promise<EmergingQuoteRow[]> {
+  const res = await fetchWithRetry(
+    "https://www.tpex.org.tw/openapi/v1/tpex_esb_latest_statistics",
+    { headers: { "User-Agent": USER_AGENT }, cache: "no-store" },
+    { label: "TPEX emerging (興櫃) daily quotes" },
+  );
+  if (!res.ok) throw new Error(`TPEX emerging daily quotes HTTP ${res.status}`);
+  const json = (await res.json()) as EsbDailyStatisticsRow[];
+  if (!Array.isArray(json)) return [];
+
+  const rows: EmergingQuoteRow[] = [];
+  for (const row of json) {
+    const parsed = parseEmergingQuoteRow(row);
+    if (parsed) rows.push(parsed);
+  }
+  return rows;
 }

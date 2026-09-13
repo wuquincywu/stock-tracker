@@ -64,7 +64,7 @@ export default async function MarketPage({
         <WatchlistTabs active="all" hasUnreadNotifications={unread} />
       </div>
       <p className="mb-6 text-sm text-zinc-500">
-        全市場上市＋上櫃股票，顯示方式跟已追蹤股票一致。部分股票的歷史資料仍在補齊中，補齊前只會顯示部分徽章。
+        全市場上市＋上櫃＋興櫃股票，顯示方式跟已追蹤股票一致。興櫃股票沒有三大法人資料，只會顯示股價與均線；部分股票的歷史資料仍在補齊中，補齊前只會顯示部分徽章。
       </p>
 
       {!hasMarketData ? (

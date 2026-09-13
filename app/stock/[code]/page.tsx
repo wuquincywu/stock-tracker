@@ -7,6 +7,7 @@ import {
   latestMaSnapshot,
 } from "@/lib/indicators";
 import { CHART_CALC_BUFFER_MONTHS, getChartSeries, getInstitutionalSeries, getPriceSeries, lookupStock } from "@/lib/marketdata";
+import { MARKET_LABEL } from "@/lib/types";
 import type { PriceRow } from "@/lib/types";
 import { BollingerDetailBadges } from "@/components/BollingerBadges";
 import { InstitutionalLevelBadge, StreakBadges } from "@/components/InstitutionalBadges";
@@ -102,7 +103,7 @@ export default async function StockDetailPage({ params }: { params: Promise<{ co
             {code} {info.name}
           </h1>
           <p className="text-xs text-zinc-500">
-            {info.market === "TWSE" ? "上市" : "上櫃"}
+            {MARKET_LABEL[info.market]}
             {latestDataDate && <span className="ml-2 text-zinc-600">資料更新至 {latestDataDate}</span>}
           </p>
         </div>

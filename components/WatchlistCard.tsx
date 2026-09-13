@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { BollingerCompactBadges } from "@/components/BollingerBadges";
 import { InstitutionalLevelBadge, ShareholderConcentrationBadges, StreakBadges } from "@/components/InstitutionalBadges";
+import { MARKET_LABEL } from "@/lib/types";
 import type { InstitutionalCategory, InstitutionalLevel, MaLine, WatchlistCardData } from "@/lib/types";
 
 export type { WatchlistCardData } from "@/lib/types";
@@ -40,7 +41,7 @@ export default function WatchlistCard({
           <span className="font-semibold">
             {card.code} {card.name}
           </span>
-          <span className="text-xs text-zinc-500">{card.market === "TWSE" ? "上市" : "上櫃"}</span>
+          <span className="text-xs text-zinc-500">{MARKET_LABEL[card.market]}</span>
         </Link>
         <div className="flex items-center gap-2">
           {actionSlot}

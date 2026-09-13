@@ -10,10 +10,9 @@ import {
   INSTITUTIONAL_LEVEL_LABEL,
   INSTITUTIONAL_LEVEL_ORDER,
   MA_LINE_ORDER,
+  MARKET_LABEL,
 } from "@/lib/types";
 import type { InstitutionalLevel, MaLine, Market } from "@/lib/types";
-
-const MARKET_LABEL: Record<Market, string> = { TWSE: "上市", TPEX: "上櫃" };
 
 const SORT_ORDER: SortKey[] = ["code", "changePct", "institutionalNet", "streakLength", "percentB"];
 const SORT_LABEL: Record<SortKey, string> = {

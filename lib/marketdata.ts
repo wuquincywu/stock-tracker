@@ -199,7 +199,7 @@ const SEARCH_RESULT_LIMIT = 8;
  * taking out the other's directory coverage.
  */
 async function fetchStockDirectory(): Promise<StockDirectoryEntry[]> {
-  const [twseRows, tpexRows] = await Promise.all([
+  const [twseRows, tpexRows, emergingRows] = await Promise.all([
     twse.getAllSecurities().catch((err) => {
       console.error("[fetchStockDirectory] TWSE getAllSecurities failed:", err);
       return [];
@@ -208,13 +208,18 @@ async function fetchStockDirectory(): Promise<StockDirectoryEntry[]> {
       console.error("[fetchStockDirectory] TPEX getAllSecurities failed:", err);
       return [];
     }),
+    tpex.getEmergingDailyQuotes().catch((err) => {
+      console.error("[fetchStockDirectory] TPEX emerging (興櫃) getEmergingDailyQuotes failed:", err);
+      return [];
+    }),
   ]);
 
   const byCode = new Map<string, StockDirectoryEntry>();
   for (const r of twseRows) byCode.set(r.code, { code: r.code, name: r.name, market: "TWSE" });
   for (const r of tpexRows) byCode.set(r.code, { code: r.code, name: r.name, market: "TPEX" });
+  for (const r of emergingRows) byCode.set(r.code, { code: r.code, name: r.name, market: "EMERGING" });
 
-  if (twseRows.length === 0 || tpexRows.length === 0) {
+  if (twseRows.length === 0 || tpexRows.length === 0 || emergingRows.length === 0) {
     try {
       const finmindAll = await finmind.getAllStocks();
       if (twseRows.length === 0) {
@@ -223,9 +228,26 @@ async function fetchStockDirectory(): Promise<StockDirectoryEntry[]> {
       if (tpexRows.length === 0) {
         for (const r of finmindAll) if (r.market === "TPEX") byCode.set(r.code, r);
       }
+      if (emergingRows.length === 0) {
+        for (const r of finmindAll) if (r.market === "EMERGING") byCode.set(r.code, r);
+      }
     } catch (err) {
       console.error("[fetchStockDirectory] FinMind per-market fallback failed:", err);
     }
+  }
+
+  // Free side benefit: getEmergingDailyQuotes() already fetched today's price for every 興櫃 stock
+  // just to build the directory above — merge it into stored price history too, the same call
+  // doing double duty. Without this, a 興櫃 stock would show no price/MA/Bollinger on 所有股票 until
+  // someone happens to track it (triggering the per-stock FinMind fallback in refreshPriceSeries) —
+  // 興櫃 has no free per-stock history endpoint, so there's no other free whole-market backfill for
+  // it the way T86/TPEX's daily report covers price+institutional for the other two markets.
+  if (emergingRows.length > 0) {
+    await chunkedMap(emergingRows, 20, (r) =>
+      mergeStoredPriceHistory(r.code, [r.price]).catch((err) => {
+        console.error(`[fetchStockDirectory] failed to seed 興櫃 price for ${r.code}:`, err);
+      }),
+    );
   }
 
   return [...byCode.values()];

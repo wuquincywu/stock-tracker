@@ -7,6 +7,7 @@ import { useCardFilterUrl } from "@/components/useCardFilterUrl";
 import WatchlistCard, { type CardHighlight } from "@/components/WatchlistCard";
 import type { StockOption } from "@/components/StockSearchInput";
 import { filterStateToSearchParams, isFilterActive, isStreakFilterActive } from "@/lib/cardFilters";
+import { MARKET_LABEL } from "@/lib/types";
 import type { WatchlistCardData } from "@/lib/types";
 
 const SUGGEST_DEBOUNCE_MS = 250;
@@ -234,7 +235,7 @@ function MarketOverviewFilterable({
                 >
                   <span>{option.name}</span>
                   <span className="text-xs text-zinc-500">
-                    {option.code} · {option.market === "TWSE" ? "上市" : "上櫃"}
+                    {option.code} · {MARKET_LABEL[option.market]}
                   </span>
                 </button>
               </li>

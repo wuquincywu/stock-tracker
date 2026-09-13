@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseNumber, parseTpexInstitutionalRow } from "./tpex";
+import { parseEmergingQuoteRow, parseNumber, parseTpexInstitutionalRow } from "./tpex";
 
 describe("parseNumber", () => {
   it("strips thousands separators", () => {
@@ -22,5 +22,40 @@ describe("parseTpexInstitutionalRow", () => {
       investmentTrustNet: -200,
       dealerNet: 50,
     });
+  });
+});
+
+describe("parseEmergingQuoteRow", () => {
+  it("maps a real 興櫃股票當日行情表 row, converting the date and using Average as the open stand-in", () => {
+    // Real row, 1260 (富味鄉), 2026-09-11 snapshot.
+    const row = {
+      Date: "1150911",
+      SecuritiesCompanyCode: "1260",
+      CompanyName: "富味鄉",
+      Highest: "31.45",
+      Lowest: "30",
+      Average: "30.27",
+      LatestPrice: "31.45",
+      TransactionVolume: "183197",
+    };
+    expect(parseEmergingQuoteRow(row)).toEqual({
+      code: "1260",
+      name: "富味鄉",
+      price: { date: "2026-09-11", open: 30.27, high: 31.45, low: 30, close: 31.45, volume: 183197 },
+    });
+  });
+
+  it("returns null for a stock with no trade that day (empty LatestPrice)", () => {
+    const row = {
+      Date: "1150911",
+      SecuritiesCompanyCode: "9999",
+      CompanyName: "無成交",
+      Highest: "",
+      Lowest: "",
+      Average: "",
+      LatestPrice: "",
+      TransactionVolume: "",
+    };
+    expect(parseEmergingQuoteRow(row)).toBeNull();
   });
 });

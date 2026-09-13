@@ -1,6 +1,21 @@
-export type Market = "TWSE" | "TPEX";
+export type Market = "TWSE" | "TPEX" | "EMERGING";
 
-export const ALL_MARKETS: Market[] = ["TWSE", "TPEX"];
+export const ALL_MARKETS: Market[] = ["TWSE", "TPEX", "EMERGING"];
+
+/** Canonical 上市/上櫃/興櫃 display labels — the single source of truth for every place that used
+ * to hand-write its own `market === "TWSE" ? "上市" : "上櫃"` ternary (which silently mis-labeled
+ * 興櫃 as 上櫃 once a third market existed).
+ *
+ * Note: 興櫃 (Emerging Stock Market) stocks have no 三大法人 (foreign/investment-trust/dealer)
+ * buy-sell data at all — it's a dealer-quoted, negotiated market (等殖成交), not the order-matched
+ * exchange trading TWSE/TPEX's institutional reports are built from. Indicators that depend on
+ * institutional history (level classification, streaks) simply stay null for these stocks — not a
+ * bug, just nothing to compute from an empty series. */
+export const MARKET_LABEL: Record<Market, string> = {
+  TWSE: "上市",
+  TPEX: "上櫃",
+  EMERGING: "興櫃",
+};
 
 export interface WatchlistEntry {
   code: string;

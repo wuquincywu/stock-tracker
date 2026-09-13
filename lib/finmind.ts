@@ -93,7 +93,7 @@ export async function getInstitutionalSeries(
 interface FinMindStockInfoRow {
   stock_id: string;
   stock_name: string;
-  type: "twse" | "tpex";
+  type: "twse" | "tpex" | "emerging";
   industry_category: string;
 }
 
@@ -101,11 +101,20 @@ interface FinMindStockInfoRow {
 // them apart from real stocks/ETFs/bond-ETFs in this dataset (there's no separate `type` value).
 const NON_STOCK_CATEGORY = "所有證券";
 
+/** Verified against a real FinMind TaiwanStockInfo response (1260, 富味鄉): `type` is literally
+ * "emerging" for 興櫃 stocks, not just "twse"/"tpex" — mapping anything non-"twse" to TPEX (as this
+ * used to do) would have silently mislabeled every 興櫃 stock as 上櫃. */
+function toMarket(type: FinMindStockInfoRow["type"]): Market {
+  if (type === "twse") return "TWSE";
+  if (type === "emerging") return "EMERGING";
+  return "TPEX";
+}
+
 export async function lookupStock(code: string): Promise<{ name: string; market: Market } | null> {
   const rows = await finmindGet<FinMindStockInfoRow>("TaiwanStockInfo", { data_id: code });
   if (rows.length === 0) return null;
   const row = rows[0];
-  return { name: row.stock_name, market: row.type === "twse" ? "TWSE" : "TPEX" };
+  return { name: row.stock_name, market: toMarket(row.type) };
 }
 
 export interface StockDirectoryEntry {
@@ -115,7 +124,7 @@ export interface StockDirectoryEntry {
 }
 
 /**
- * Full TWSE+TPEX stock directory (code/name/market), for search/autocomplete and market-wide
+ * Full TWSE+TPEX+興櫃 stock directory (code/name/market), for search/autocomplete and market-wide
  * backfills. Deduped by code, and warrants (權證) excluded — they're derivative instruments with
  * short lifespans, not something this app's per-stock indicators (MA/Bollinger/三大法人) are
  * meaningful for, and there are thousands of them cluttering the raw dataset.
@@ -126,7 +135,7 @@ export async function getAllStocks(): Promise<StockDirectoryEntry[]> {
   for (const r of rows) {
     if (r.industry_category === NON_STOCK_CATEGORY) continue;
     if (byCode.has(r.stock_id)) continue;
-    byCode.set(r.stock_id, { code: r.stock_id, name: r.stock_name, market: r.type === "twse" ? "TWSE" : "TPEX" });
+    byCode.set(r.stock_id, { code: r.stock_id, name: r.stock_name, market: toMarket(r.type) });
   }
   return [...byCode.values()];
 }
