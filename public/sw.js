@@ -1,9 +1,29 @@
-self.addEventListener("install", () => {
+// Deliberately minimal, static-only offline support: only one file is ever cached (the offline
+// fallback page below), and nothing dynamic (HTML pages with real data, /api/* responses) is ever
+// cached — this app's whole point is showing current prices/institutional flow/alerts, so serving
+// a stale cached copy of a data page while "offline" would be actively misleading, worse than the
+// browser's own "can't reach this page" error. All this does is swap that browser error for a
+// nicer message on navigation failures; every other request just passes through to the network
+// exactly as if this fetch handler didn't exist.
+const OFFLINE_CACHE = "offline-v1";
+const OFFLINE_URL = "/offline.html";
+
+self.addEventListener("install", (event) => {
+  event.waitUntil(
+    caches.open(OFFLINE_CACHE).then((cache) => cache.add(OFFLINE_URL)).catch(() => {}),
+  );
   self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(self.clients.claim());
+});
+
+self.addEventListener("fetch", (event) => {
+  if (event.request.mode !== "navigate") return; // only handle page loads, never assets/API calls
+  event.respondWith(
+    fetch(event.request).catch(() => caches.match(OFFLINE_URL).then((res) => res ?? Response.error())),
+  );
 });
 
 // PWA app-icon red dot — supported from a service worker per the Badging API spec, so this works

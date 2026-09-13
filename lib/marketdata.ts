@@ -1,11 +1,7 @@
-import {
-  analyzeBollinger,
-  bollingerBands,
-  classifyInstitutionalLevel,
-  computeInstitutionalStreaks,
-  latestMaSnapshot,
-} from "./indicators";
+import { buildCard, type CardIdentity } from "./cardBuilder";
+import { chunkedMap } from "./concurrency";
 import * as finmind from "./finmind";
+import { bollingerBands } from "./indicators";
 import {
   DEFAULT_CHART_MONTHS,
   getCachedMarketCards,
@@ -24,20 +20,11 @@ import {
 } from "./redis";
 import * as tpex from "./tpex";
 import * as twse from "./twse";
-import type { BollingerPoint, InstitutionalRow, Market, PriceRow, WatchlistCardData } from "./types";
+import type { BollingerPoint, InstitutionalRow, MaLine, Market, PriceRow, WatchlistCardData } from "./types";
 import type { StockDirectoryEntry } from "./finmind";
 
 function toIsoDate(d: Date): string {
   return d.toISOString().slice(0, 10);
-}
-
-async function chunkedMap<T, R>(items: T[], size: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const results: R[] = [];
-  for (let i = 0; i < items.length; i += size) {
-    const batch = items.slice(i, i + size);
-    results.push(...(await Promise.all(batch.map(fn))));
-  }
-  return results;
 }
 
 /**
@@ -78,25 +65,41 @@ export async function getInstitutionalSeries(code: string, days = 10): Promise<I
  * and any TWSE call that errors out - fall back to FinMind, which covers both markets with a
  * single date-ranged query.
  *
- * Always live-fetches — no freshness/staleness check gates this, since callers (the daily cron,
- * and the chart's explicit "show more months" button) already control how often this runs; a
- * silent skip-if-recently-fetched check here previously caused real bugs (stale/wrong data served
- * without any way for the caller to tell), so there isn't one.
+ * Always live-fetches — no freshness/staleness check gates WHETHER this runs, since callers (the
+ * daily cron, and the chart's explicit "show more months" button) already control how often this
+ * runs; a silent skip-if-recently-fetched check here previously caused real bugs (stale/wrong data
+ * served without any way for the caller to tell), so there isn't one. What it fetches CAN still
+ * shrink once a stock already has enough backfilled history (see INCREMENTAL_FETCH_MONTHS below) —
+ * that's a different thing from skipping the fetch outright, and it only ever affects how much gets
+ * re-fetched, never whether today's new row gets picked up.
  */
+const MIN_STORED_DAYS_FOR_INCREMENTAL_FETCH = 70; // comfortably past MA60's warm-up plus slack for holidays
+// Once a stock has that much history already, the daily cron only needs enough of the most recent
+// calendar time to pick up new trading day(s) since the last run, not `months` (which a user can
+// set as high as MAX_CHART_MONTHS = 24) — re-fetching the whole configured window from TWSE/FinMind
+// every single day for every tracked stock was needlessly large: 2 months of daily overlap is far
+// more than enough to cover any realistic gap (a missed cron run, a long weekend), while merging by
+// date (mergeStoredPriceHistory) makes a wider-than-needed overlap harmless either way.
+const INCREMENTAL_FETCH_MONTHS = 2;
+
 export async function refreshPriceSeries(code: string, market: Market, months: number): Promise<PriceRow[]> {
   const cutoff = new Date();
   cutoff.setMonth(cutoff.getMonth() - months);
   const cutoffStr = toIsoDate(cutoff);
 
+  const existing = await getStoredPriceHistory(code);
+  const fetchMonths =
+    existing.length >= MIN_STORED_DAYS_FOR_INCREMENTAL_FETCH ? Math.min(months, INCREMENTAL_FETCH_MONTHS) : months;
+
   let fresh: PriceRow[] = [];
   try {
     if (market === "TWSE") {
-      fresh = await twse.getPriceHistory(code, months);
+      fresh = await twse.getPriceHistory(code, fetchMonths);
     }
     if (fresh.length === 0) {
       const end = new Date();
       const start = new Date(end);
-      start.setMonth(start.getMonth() - months);
+      start.setMonth(start.getMonth() - fetchMonths);
       fresh = await finmind.getPriceSeries(code, toIsoDate(start), toIsoDate(end));
     }
     // Marks this stock as recently-updated for backfillTwseMarketPrices's own resumability check
@@ -417,17 +420,19 @@ const MARKET_CARDS_CACHE_TTL_MS = 15 * 60 * 1000;
 // it independently.
 let inFlightBuild: Promise<WatchlistCardData[]> | null = null;
 
-async function buildAllMarketCards(): Promise<WatchlistCardData[]> {
-  // This builds the shared "所有股票" cache (not any one user's view), so chartMonths — now a
-  // per-user setting — can't apply here; it always uses the app default.
-  const [directory, maLines] = await Promise.all([getStockDirectory(), getMaLines()]);
-  const chartMonths = DEFAULT_CHART_MONTHS;
-
-  // Reads whatever's already stored (from the market-wide backfill + tracked-stock views) — never
-  // a live per-stock fetch, since that would mean thousands of live API calls on every page view.
-  // Some stocks' history may still be incomplete or missing; their badges just don't show yet
-  // until the backfill reaches them.
-  const codes = directory.map((d) => d.code);
+/**
+ * Bulk-reads stored price/institutional history for `entries` and builds a rich card for each via
+ * `buildCard` (lib/cardBuilder.ts) — the shared implementation used by both the watchlist page
+ * (per-user tracked stocks) and the market-wide cache below (the whole directory). Two bulk MGETs
+ * total, regardless of how many entries — never a per-stock round-trip, and never a live fetch
+ * (reads only what's already stored; see getPriceSeries/getInstitutionalSeries's own doc comments).
+ */
+export async function buildCardsForEntries(
+  entries: CardIdentity[],
+  chartMonths: number,
+  maLines: MaLine[],
+): Promise<WatchlistCardData[]> {
+  const codes = entries.map((e) => e.code);
   const [priceMap, institutionalMap] = await Promise.all([
     getStoredPriceHistoryBulk(codes),
     getStoredInstitutionalHistoryBulk(codes),
@@ -437,41 +442,20 @@ async function buildAllMarketCards(): Promise<WatchlistCardData[]> {
   cutoff.setMonth(cutoff.getMonth() - chartMonths);
   const cutoffStr = toIsoDate(cutoff);
 
-  return directory.map((entry) => {
+  return entries.map((entry) => {
     const priceSeries = (priceMap.get(entry.code) ?? []).filter((p) => p.date >= cutoffStr);
     const institutional = institutionalMap.get(entry.code) ?? [];
-
-    const level = classifyInstitutionalLevel(institutional);
-    const streaks = computeInstitutionalStreaks(institutional);
-    const bollinger = priceSeries.length > 0 ? analyzeBollinger(priceSeries, bollingerBands(priceSeries)) : null;
-    const maSnapshot = latestMaSnapshot(priceSeries, maLines);
-
-    let price: number | null = null;
-    let change: number | null = null;
-    let changePct: number | null = null;
-    if (priceSeries.length > 0) {
-      price = priceSeries[priceSeries.length - 1].close;
-      if (priceSeries.length > 1) {
-        const prevClose = priceSeries[priceSeries.length - 2].close;
-        change = price - prevClose;
-        changePct = prevClose !== 0 ? (change / prevClose) * 100 : null;
-      }
-    }
-
-    return {
-      code: entry.code,
-      name: entry.name,
-      market: entry.market,
-      latestInstitutional: institutional.length > 0 ? institutional[institutional.length - 1] : null,
-      maSnapshot,
-      level,
-      streaks,
-      bollinger,
-      price,
-      change,
-      changePct,
-    } satisfies WatchlistCardData;
+    return buildCard(entry, priceSeries, institutional, maLines);
   });
+}
+
+async function buildAllMarketCards(): Promise<WatchlistCardData[]> {
+  // This builds the shared "所有股票" cache (not any one user's view), so chartMonths — now a
+  // per-user setting — can't apply here; it always uses the app default.
+  const [directory, maLines] = await Promise.all([getStockDirectory(), getMaLines()]);
+  // Some stocks' history may still be incomplete or missing (market-wide backfill still catching
+  // up); their badges just don't show yet until it reaches them.
+  return buildCardsForEntries(directory, DEFAULT_CHART_MONTHS, maLines);
 }
 
 /**

@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>股票追蹤</title>
+    <style>
+      html, body {
+        height: 100%;
+        margin: 0;
+        background: #0a0a0a;
+        color: #f4f4f5;
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      .wrap {
+        max-width: 480px;
+        margin: 0 auto;
+        padding: 6rem 1rem;
+        text-align: center;
+      }
+      p.title { font-size: 1.125rem; font-weight: 600; margin: 0 0 0.5rem; }
+      p.sub { font-size: 0.875rem; color: #a1a1aa; margin: 0 0 1.5rem; }
+      button {
+        border-radius: 9999px;
+        padding: 0.5rem 1.25rem;
+        font-size: 0.875rem;
+        font-weight: 500;
+        background: #10b981;
+        color: #09090b;
+        border: none;
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <p class="title">目前離線</p>
+      <p class="sub">連線恢復後即可繼續使用，資料仍會是連線前的最後狀態。</p>
+      <button onclick="location.reload()">重新整理</button>
+    </div>
+  </body>
+</html>

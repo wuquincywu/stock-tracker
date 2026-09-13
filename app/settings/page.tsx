@@ -1,8 +1,15 @@
-import { DEFAULT_CHART_MONTHS, getAlertConfig, getChartMonths } from "@/lib/redis";
+import { DEFAULT_CHART_MONTHS, getAlertConfig, getChartMonths, getCronStatus } from "@/lib/redis";
 import { getCurrentUser } from "@/lib/users";
 import { ALL_MA_ALERT_KEYS } from "@/lib/types";
 import SettingsClient from "@/components/SettingsClient";
 import BackButton from "@/components/ui/BackButton";
+
+/** Taipei-local "YYYY-MM-DD HH:mm" for the cron-status line below — matches how dates are
+ * displayed elsewhere in the app (taipeiDateString), just with the time kept too. */
+function formatTaipeiDateTime(iso: string): string {
+  const d = new Date(new Date(iso).getTime() + 8 * 60 * 60 * 1000);
+  return d.toISOString().slice(0, 16).replace("T", " ");
+}
 
 export default async function SettingsPage() {
   const currentUser = await getCurrentUser();
@@ -14,8 +21,13 @@ export default async function SettingsPage() {
     maAlerts: ALL_MA_ALERT_KEYS,
   } as Awaited<ReturnType<typeof getAlertConfig>>;
   let chartMonths = DEFAULT_CHART_MONTHS;
+  let cronStatus: Awaited<ReturnType<typeof getCronStatus>> = null;
   try {
-    [config, chartMonths] = await Promise.all([getAlertConfig(currentUser), getChartMonths(currentUser)]);
+    [config, chartMonths, cronStatus] = await Promise.all([
+      getAlertConfig(currentUser),
+      getChartMonths(currentUser),
+      getCronStatus(),
+    ]);
   } catch {
     // fall back to the defaults above if Redis isn't reachable
   }
@@ -30,6 +42,24 @@ export default async function SettingsPage() {
         </p>
       </div>
       <SettingsClient initialConfig={config} initialChartMonths={chartMonths} />
+
+      <div className="mt-8 border-t border-zinc-800 pt-4 text-xs text-zinc-600">
+        {cronStatus ? (
+          <p>
+            上次每日檢查：{formatTaipeiDateTime(cronStatus.at)}
+            {cronStatus.ok ? (
+              <span className="text-zinc-500">
+                {" "}
+                · 成功（{cronStatus.summary?.users ?? 0} 位使用者、{cronStatus.summary?.checked ?? 0} 檔）
+              </span>
+            ) : (
+              <span className="text-red-400"> · 失敗：{cronStatus.error}</span>
+            )}
+          </p>
+        ) : (
+          <p>尚無每日檢查紀錄。</p>
+        )}
+      </div>
     </div>
   );
 }

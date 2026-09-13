@@ -1,6 +1,7 @@
 import { Redis } from "@upstash/redis";
 import { taipeiDateString } from "./date";
 import type { StockDirectoryEntry } from "./finmind";
+import { mergeHistory } from "./historyMerge";
 import type {
   AlertConfig,
   InstitutionalCategory,
@@ -23,6 +24,7 @@ const KEYS = {
   stockDirectory: "cache:stockDirectory",
   marketCards: "cache:marketCards",
   users: "users:list",
+  cronStatus: "status:cron:checkAlerts",
 } as const;
 
 const STOCK_DIRECTORY_TTL_SECONDS = 24 * 60 * 60; // stock list changes rarely — refresh once a day
@@ -269,9 +271,7 @@ export async function mergeStoredPriceHistory(code: string, fresh: PriceRow[]): 
   if (fresh.length === 0) return getStoredPriceHistory(code);
 
   const existing = await getStoredPriceHistory(code);
-  const byDate = new Map(existing.map((r) => [r.date, r]));
-  for (const row of fresh) byDate.set(row.date, row);
-  const merged = [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date)).slice(-HISTORY_CAP_DAYS);
+  const merged = mergeHistory(existing, fresh, HISTORY_CAP_DAYS);
 
   await redis.set(historyPriceKey(code), merged);
   return merged;
@@ -289,9 +289,7 @@ export async function mergeStoredInstitutionalHistory(
   if (fresh.length === 0) return getStoredInstitutionalHistory(code);
 
   const existing = await getStoredInstitutionalHistory(code);
-  const byDate = new Map(existing.map((r) => [r.date, r]));
-  for (const row of fresh) byDate.set(row.date, row);
-  const merged = [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date)).slice(-HISTORY_CAP_DAYS);
+  const merged = mergeHistory(existing, fresh, HISTORY_CAP_DAYS);
 
   await redis.set(historyInstitutionalKey(code), merged);
   return merged;
@@ -413,4 +411,28 @@ export async function hasUnreadNotifications(userId: string): Promise<boolean> {
     .get<string>(notificationsReadKey(userId))
     .exec();
   return Array.isArray(items) && items.length > 0 && lastRead !== today;
+}
+
+// ---- Daily cron observability ----
+// Nothing previously recorded whether the daily check-alerts cron actually ran, or ran
+// successfully — if it silently failed for days (TWSE WAF, FinMind quota, a 60s timeout), the only
+// visible symptom was stale prices with no error surfaced anywhere. This is a lightweight status
+// record, not a full log: just enough to answer "did today's check run, and did it work".
+
+export interface CronStatus {
+  at: string; // ISO timestamp of when the run finished (successfully or not)
+  ok: boolean;
+  /** Present when ok is true: a short summary of what the run did. */
+  summary?: { users: number; checked: number; sent: number; failed: number };
+  /** Present when ok is false: the error message, for a human glancing at Settings, not a stack trace. */
+  error?: string;
+}
+
+export async function setCronStatus(status: CronStatus): Promise<void> {
+  await redis.set(KEYS.cronStatus, status);
+}
+
+export async function getCronStatus(): Promise<CronStatus | null> {
+  const raw = await redis.get<CronStatus>(KEYS.cronStatus);
+  return raw && typeof raw === "object" ? raw : null;
 }

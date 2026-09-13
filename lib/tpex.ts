@@ -4,7 +4,7 @@ interface TpexInstiResponse {
   tables?: { fields: string[]; data: string[][] }[];
 }
 
-function parseNumber(raw: string): number {
+export function parseNumber(raw: string): number {
   return Number(raw.replace(/,/g, ""));
 }
 
@@ -21,6 +21,24 @@ export interface TpexInstitutionalRow {
   dealerNet: number;
 }
 
+// This endpoint's `fields` are all generically labeled "買進/賣出/買賣超股數" with no category
+// names, so the mapping below was reverse-engineered by cross-checking subtotal arithmetic against
+// two real stocks (00411A, 3105): col 10 (外資合計) = col 4 (不含自營商) + col 7 (外資自營商); col
+// 22 (自營商合計) = col 16 (自行) + col 19 (避險); and the final column (三大法人合計) = col10 +
+// col13(投信) + col22 — confirmed exact on both, and col10/col13/col22 match FinMind's
+// TaiwanStockInstitutionalInvestorsBuySell numbers for the same stock/date exactly.
+/** One row of this endpoint's data table -> TpexInstitutionalRow. Exported for testing — see the
+ * reverse-engineering note above; this is the most upstream-fragile part of the TPEX integration. */
+export function parseTpexInstitutionalRow(row: string[]): TpexInstitutionalRow {
+  return {
+    code: row[0],
+    name: row[1],
+    foreignNet: parseNumber(row[10]),
+    investmentTrustNet: parseNumber(row[13]),
+    dealerNet: parseNumber(row[22]),
+  };
+}
+
 /** TPEX 三大法人買賣超日報 for one exact calendar date — [] on weekends/holidays/no-data. */
 async function fetchInstitutionalForDate(d: Date): Promise<TpexInstitutionalRow[]> {
   const url = `https://www.tpex.org.tw/web/stock/3insti/daily_trade/3itrade_hedge_result.php?l=zh-tw&d=${toRocDate(d)}&t=D&o=json`;
@@ -33,19 +51,7 @@ async function fetchInstitutionalForDate(d: Date): Promise<TpexInstitutionalRow[
   const json = (await res.json()) as TpexInstiResponse;
   const table = json.tables?.[0];
   if (!table || !Array.isArray(table.data) || table.data.length === 0) return [];
-  // This endpoint's `fields` are all generically labeled "買進/賣出/買賣超股數" with no category
-  // names, so the mapping below was reverse-engineered by cross-checking subtotal arithmetic
-  // against two real stocks (00411A, 3105): col 10 (外資合計) = col 4 (不含自營商) + col 7
-  // (外資自營商); col 22 (自營商合計) = col 16 (自行) + col 19 (避險); and the final column (三大
-  // 法人合計) = col10 + col13(投信) + col22 — confirmed exact on both, and col10/col13/col22 match
-  // FinMind's TaiwanStockInstitutionalInvestorsBuySell numbers for the same stock/date exactly.
-  return table.data.map((row) => ({
-    code: row[0],
-    name: row[1],
-    foreignNet: parseNumber(row[10]),
-    investmentTrustNet: parseNumber(row[13]),
-    dealerNet: parseNumber(row[22]),
-  }));
+  return table.data.map(parseTpexInstitutionalRow);
 }
 
 /**

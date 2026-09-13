@@ -1,6 +1,7 @@
+import { chunkedMap } from "./concurrency";
 import { taipeiDateString } from "./date";
 import { classifyInstitutionalLevel, computeInstitutionalStreaks, latestMaSnapshot } from "./indicators";
-import { refreshInstitutionalSeries, refreshPriceSeries } from "./marketdata";
+import { getInstitutionalSeries, getPriceSeries, refreshInstitutionalSeries, refreshPriceSeries } from "./marketdata";
 import { broadcastPush } from "./push";
 import { getAlertConfig, getChartMonths, getWatchlist, setDailyNotifications } from "./redis";
 import { INSTITUTIONAL_CATEGORY_LABEL, INSTITUTIONAL_CATEGORY_ORDER, INSTITUTIONAL_LEVEL_LABEL } from "./types";
@@ -14,17 +15,10 @@ import type {
   WatchlistEntry,
 } from "./types";
 
-const INSTITUTIONAL_HISTORY_DAYS = 40; // enough trading rows for a meaningful level baseline (min 20)
+// Exported so the cron route can size its own per-code refresh reasoning the same way checkOne
+// does — see processUserAlerts's `refreshedCodes` doc comment below.
+export const INSTITUTIONAL_HISTORY_DAYS = 40; // enough trading rows for a meaningful level baseline (min 20)
 const BATCH_SIZE = 5;
-
-async function chunkedMap<T, R>(items: T[], size: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const results: R[] = [];
-  for (let i = 0; i < items.length; i += size) {
-    const batch = items.slice(i, i + size);
-    results.push(...(await Promise.all(batch.map(fn))));
-  }
-  return results;
-}
 
 interface StockCheckResult {
   code: string;
@@ -41,7 +35,12 @@ interface StockCheckResult {
 
 const EMPTY_STREAKS: InstitutionalStreakSet = { foreign: null, trust: null, dealer: null, combined: null };
 
-async function checkOne(entry: WatchlistEntry, maLines: number[], chartMonths: number): Promise<StockCheckResult> {
+async function checkOne(
+  entry: WatchlistEntry,
+  maLines: number[],
+  chartMonths: number,
+  live: boolean,
+): Promise<StockCheckResult> {
   const empty: StockCheckResult = {
     code: entry.code,
     priceDate: null,
@@ -52,10 +51,18 @@ async function checkOne(entry: WatchlistEntry, maLines: number[], chartMonths: n
     streaks: EMPTY_STREAKS,
   };
   try {
-    const [prices, institutional] = await Promise.all([
-      refreshPriceSeries(entry.code, entry.market, chartMonths),
-      refreshInstitutionalSeries(entry.code, INSTITUTIONAL_HISTORY_DAYS),
-    ]);
+    // `live: false` reads whatever's already stored instead of live-fetching — used by the cron
+    // when a previous user's watchlist already triggered a live refresh for this exact code during
+    // this same run (see processUserAlerts's `refreshedCodes`).
+    const [prices, institutional] = live
+      ? await Promise.all([
+          refreshPriceSeries(entry.code, entry.market, chartMonths),
+          refreshInstitutionalSeries(entry.code, INSTITUTIONAL_HISTORY_DAYS),
+        ])
+      : await Promise.all([
+          getPriceSeries(entry.code, chartMonths),
+          getInstitutionalSeries(entry.code, INSTITUTIONAL_HISTORY_DAYS),
+        ]);
 
     const priceDate = prices.length > 0 ? prices[prices.length - 1].date : null;
     const maSnapshot = latestMaSnapshot(prices, maLines as MaLine[]);
@@ -107,8 +114,21 @@ export const EMPTY_ALERT_SUMMARY: UserAlertSummary = {
  *
  * `maLines` is shared app-wide config (not user-configurable); everything else here (watchlist,
  * alert thresholds, chart-months, notification history, push subscriptions) is this user's own.
+ *
+ * `refreshedCodes`, when passed, is a set shared across multiple calls to this function within the
+ * same daily-cron run (app/api/cron/check-alerts/route.ts loops over every registered user
+ * sequentially, reusing one Set across all of them). A code already in the set was live-refreshed
+ * by an earlier user's call this run, so this call reads it read-only instead — small trusted
+ * groups tend to have overlapping watchlists (everyone tracking 2330), and without this a stock
+ * tracked by N users would get live-fetched from TWSE/FinMind N times in the same run instead of
+ * once. Omitted (as the Settings page's on-demand test button does) every stock is always
+ * live-refreshed, unchanged from before.
  */
-export async function processUserAlerts(userId: string, maLines: number[]): Promise<UserAlertSummary> {
+export async function processUserAlerts(
+  userId: string,
+  maLines: number[],
+  refreshedCodes?: Set<string>,
+): Promise<UserAlertSummary> {
   const [watchlist, alertConfig, chartMonths] = await Promise.all([
     getWatchlist(userId),
     getAlertConfig(userId),
@@ -116,7 +136,12 @@ export async function processUserAlerts(userId: string, maLines: number[]): Prom
   ]);
   if (watchlist.length === 0) return EMPTY_ALERT_SUMMARY;
 
-  const results = await chunkedMap(watchlist, BATCH_SIZE, (entry) => checkOne(entry, maLines, chartMonths));
+  const results = await chunkedMap(watchlist, BATCH_SIZE, async (entry) => {
+    const live = !refreshedCodes?.has(entry.code);
+    const result = await checkOne(entry, maLines, chartMonths, live);
+    refreshedCodes?.add(entry.code);
+    return result;
+  });
 
   const messagesByCode = new Map<string, NotificationPart[]>();
   let crossCount = 0;
