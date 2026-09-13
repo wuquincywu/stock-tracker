@@ -97,7 +97,21 @@ export async function getSubscriptions(userId: string): Promise<PushSubscription
   return raw ? Object.values(raw) : [];
 }
 
+/**
+ * Registers `sub` for `userId`, first stripping it from every OTHER registered user's own
+ * subscription hash. A push subscription is a browser/Service-Worker-level object — the same
+ * physical device keeps the same subscription endpoint even after the app's own identity switches
+ * (via UserSwitcher). Without this, a device that subscribed under user A and later switched to
+ * user B would silently go on receiving A's pushes forever (the endpoint would still be sitting in
+ * A's hash, and PushSetup.tsx has no way to know that from the browser side alone) — this makes
+ * "one endpoint belongs to exactly one identity, whichever last claimed it" an invariant enforced
+ * here rather than something callers have to get right.
+ */
 export async function addSubscription(userId: string, sub: PushSubscriptionRecord): Promise<void> {
+  const users = await getRegisteredUsers();
+  await Promise.all(
+    users.filter((u) => u !== userId).map((otherUserId) => redis.hdel(subscriptionsKey(otherUserId), sub.endpoint)),
+  );
   await redis.hset(subscriptionsKey(userId), { [sub.endpoint]: sub });
 }
 

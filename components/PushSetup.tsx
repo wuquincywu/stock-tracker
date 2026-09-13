@@ -44,7 +44,21 @@ export default function PushSetup() {
     if (status !== "default") return;
     navigator.serviceWorker.register("/sw.js").then((reg) =>
       reg.pushManager.getSubscription().then((sub) => {
-        if (sub) setStatus("subscribed");
+        if (!sub) return;
+        setStatus("subscribed");
+        // A push subscription lives at the browser/Service-Worker level, not tied to which app
+        // identity is currently logged in on this device — if this device subscribed as one user
+        // and later switched identity (via UserSwitcher), the browser still happily reports "already
+        // subscribed" even though the server-side record is still filed under the OLD identity, and
+        // this device would otherwise go on silently receiving that old identity's pushes forever.
+        // Re-posting on every load re-claims it for whoever is logged in now (lib/redis.ts's
+        // addSubscription strips it from every other user first) — cheap and idempotent, so safe to
+        // do unconditionally rather than only right after the user explicitly clicks "啟用通知".
+        fetch("/api/push/subscribe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(sub.toJSON()),
+        }).catch(() => {});
       }),
     );
   }, [status]);
