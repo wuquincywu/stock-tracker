@@ -176,15 +176,28 @@ export function computeInstitutionalStreaks(series: InstitutionalRow[]): Institu
 }
 
 /**
- * Big-holder (千張大戶, TDCC tier 15) concentration signal from a stock's weekly history:
- * current %, and the percentage-point change from the previous week's snapshot. `weekChangePct` is
- * null with fewer than two snapshots — a brand-new capture has nothing yet to diff against.
+ * Big-holder (千張大戶, TDCC tier 15 = 1,000,001+ shares) concentration signal from a stock's
+ * weekly history: current %, and the percentage-point change from the previous week's snapshot.
+ * `weekChangePct` is null with fewer than two snapshots — a brand-new capture has nothing yet to
+ * diff against.
+ *
+ * Both fields are null when NO captured week has ever had anyone in tier 15 at all — a genuinely
+ * small-cap/low-float stock can have its whole share count sit below the 1,000,001-share bar, so
+ * "0%" there wouldn't mean "concentration is low", it would mean the fixed absolute threshold
+ * doesn't apply to this company's scale at all (verified against the real TDCC feed: ~155 real
+ * TWSE/TPEX stocks, plus most low-share-count ETFs, currently have zero tier-15 holders). This is
+ * distinct from a stock that DID have a big holder before and doesn't now (e.g. they sold out) —
+ * that's a real, meaningful drop to 0%, not a "doesn't apply" case, so only the "never once had
+ * one" case is suppressed here.
  */
 export function computeShareholderConcentrationSignal(
   series: ShareholderConcentrationRow[],
 ): ShareholderConcentrationSignal {
   if (series.length === 0) return { latestPct: null, weekChangePct: null };
   const latest = series[series.length - 1];
+  const everHadBigHolder = series.some((row) => row.bigHolderCount > 0);
+  if (latest.bigHolderCount === 0 && !everHadBigHolder) return { latestPct: null, weekChangePct: null };
+
   const prev = series.length > 1 ? series[series.length - 2] : null;
   return {
     latestPct: latest.bigHolderPct,

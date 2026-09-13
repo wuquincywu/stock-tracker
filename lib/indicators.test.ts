@@ -118,8 +118,8 @@ describe("computeInstitutionalStreak", () => {
   });
 });
 
-function makeConcentrationRow(date: string, bigHolderPct: number): ShareholderConcentrationRow {
-  return { date, bigHolderCount: 100, bigHolderShares: 1_000_000, bigHolderPct };
+function makeConcentrationRow(date: string, bigHolderPct: number, bigHolderCount = 100): ShareholderConcentrationRow {
+  return { date, bigHolderCount, bigHolderShares: 1_000_000, bigHolderPct };
 }
 
 describe("computeShareholderConcentrationSignal", () => {
@@ -140,5 +140,15 @@ describe("computeShareholderConcentrationSignal", () => {
   it("reports a negative change when concentration drops", () => {
     const series = [makeConcentrationRow("2026-09-04", 60), makeConcentrationRow("2026-09-11", 58)];
     expect(computeShareholderConcentrationSignal(series).weekChangePct).toBeCloseTo(-2);
+  });
+
+  it("returns all-null for a stock that has never had anyone in the big-holder tier (e.g. a small-cap where the whole share count sits below the threshold)", () => {
+    const series = [makeConcentrationRow("2026-09-04", 0, 0), makeConcentrationRow("2026-09-11", 0, 0)];
+    expect(computeShareholderConcentrationSignal(series)).toEqual({ latestPct: null, weekChangePct: null });
+  });
+
+  it("still reports a real 0% when a stock DID have a big holder before and doesn't anymore", () => {
+    const series = [makeConcentrationRow("2026-09-04", 55, 3), makeConcentrationRow("2026-09-11", 0, 0)];
+    expect(computeShareholderConcentrationSignal(series)).toEqual({ latestPct: 0, weekChangePct: -55 });
   });
 });
