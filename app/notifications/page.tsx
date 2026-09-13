@@ -6,7 +6,7 @@ import { getCurrentUser } from "@/lib/users";
 import ClearAppBadge from "@/components/ClearAppBadge";
 import WatchlistTabs from "@/components/WatchlistTabs";
 
-const HISTORY_DAYS = 30;
+const HISTORY_DAYS = 10;
 
 /** 買進／站上 = 紅 (bullish, matches this app's price-up/buy color elsewhere); 賣出／低於 = 綠
  * (bearish); anything else (e.g. 平盤) stays neutral. */
@@ -20,8 +20,8 @@ function partColor(text: string): string {
  * True only for a genuine 均線 crossing alert's text ("站上 MA20" / "低於 MA5", the exact format
  * lib/alerts.ts builds it in) — the outline box on this page should only ever mark "today is the
  * day it actually crossed", never a 法人分級 or 連續買賣 line. `lib/alerts.ts`'s `processUserAlerts`
- * already only sets `highlight: true` for that same case, but this page can now show up to 30 days
- * of history (see getNotificationHistory below) — long enough to resurface a record written before
+ * already only sets `highlight: true` for that same case, but this page can now show up to
+ * HISTORY_DAYS days of history (see getNotificationHistory below) — long enough to resurface a record written before
  * that behavior was settled (see commits e88912f/480cd40) with `highlight: true` baked into a
  * streak line. Checking the text here too means a stale stored value can never show the wrong box,
  * regardless of which app version originally wrote it.
@@ -70,9 +70,9 @@ export default async function NotificationsPage() {
 
   let history: DailyNotificationGroup[] = [];
   try {
-    // Notifications are kept for 30 days (see NOTIFICATIONS_TTL_SECONDS in lib/redis.ts) but this
-    // page used to only ever read today's — the other ~29 days were written and then never shown
-    // to anyone. One call covers both today's detail and the history list below it.
+    // Notifications are kept for HISTORY_DAYS days (see NOTIFICATIONS_TTL_SECONDS in lib/redis.ts)
+    // but this page used to only ever read today's — the rest were written and then never shown to
+    // anyone. One call covers both today's detail and the history list below it.
     history = await getNotificationHistory(currentUser, HISTORY_DAYS);
     const todayItems = history.find((g) => g.date === today)?.items ?? [];
     // Opening this page is what "reads" today's notifications — clears the tab's red dot and the

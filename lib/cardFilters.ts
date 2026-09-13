@@ -130,6 +130,17 @@ function sortValue(card: WatchlistCardData, sort: SortKey, streakCategory: Insti
 }
 
 /**
+ * True for the default sort (code ascending) — the market-wide card cache is already stored in
+ * this exact order (see buildAllMarketCards in lib/marketdata.ts), and `Array.prototype.filter`
+ * preserves relative order, so a caller filtering that cache without changing `sort`/`dir` can just
+ * use the filtered array directly instead of paying for a redundant re-sort of up to ~2,400 cards
+ * on every request.
+ */
+export function isDefaultSort(state: Pick<CardFilterState, "sort" | "dir">): boolean {
+  return state.sort === "code" && state.dir === "asc";
+}
+
+/**
  * Sorts a card array by the given key/direction. A card missing the sorted field (history not
  * backfilled yet) always sorts to the end regardless of direction — otherwise a null would compare
  * as the smallest value and those cards would wrongly cluster at the "biggest gainer" /

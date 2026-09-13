@@ -1,4 +1,5 @@
 import { Redis } from "@upstash/redis";
+import { chunkArray } from "./concurrency";
 import { taipeiDateString } from "./date";
 import type { StockDirectoryEntry } from "./finmind";
 import { mergeHistory } from "./historyMerge";
@@ -22,7 +23,7 @@ const redis = Redis.fromEnv();
 const KEYS = {
   maLines: "config:maLines",
   stockDirectory: "cache:stockDirectory",
-  marketCards: "cache:marketCards",
+  marketCardsChunkCount: "cache:marketCards:count",
   users: "users:list",
   cronStatus: "status:cron:checkAlerts",
 } as const;
@@ -31,6 +32,18 @@ const STOCK_DIRECTORY_TTL_SECONDS = 24 * 60 * 60; // stock list changes rarely �
 // Matches marketdata.ts's in-process MARKET_CARDS_CACHE_TTL_MS — this is the cross-instance backing
 // store for that same cache, so both should expire together.
 const MARKET_CARDS_CACHE_TTL_SECONDS = 15 * 60;
+
+// The whole "所有股票" card set used to be one Redis value (~2,400 cards, roughly 900KB-1MB
+// serialized) — comfortably inside Upstash's REST size limit today, but not by a lot, and every
+// card field added later (this app already has volume sitting unused in PriceRow, and a KD/RSI
+// feature would add more) only makes that one value bigger. Splitting it across several smaller
+// values up front means a future field addition can't silently push a single command over a size
+// limit; 300 cards/chunk keeps each chunk comfortably small regardless.
+const MARKET_CARDS_CHUNK_SIZE = 300;
+
+function marketCardsChunkKey(i: number): string {
+  return `cache:marketCards:chunk:${i}`;
+}
 
 const DEFAULT_MA_LINES: MaLine[] = [5, 20, 60];
 const DEFAULT_ALERT_CONFIG: AlertConfig = {
@@ -209,14 +222,30 @@ export async function setCachedStockDirectory(entries: StockDirectoryEntry[]): P
   await redis.set(KEYS.stockDirectory, entries, { ex: STOCK_DIRECTORY_TTL_SECONDS });
 }
 
-/** Cross-instance backing store for marketdata.ts's in-process "所有股票" cards cache. */
+/**
+ * Cross-instance backing store for marketdata.ts's in-process "所有股票" cards cache. Stored as
+ * several chunked Redis values (see MARKET_CARDS_CHUNK_SIZE) rather than one — reads/writes all
+ * chunks in parallel, so this is still just one extra "round" of concurrent requests either way,
+ * not a sequential cost.
+ */
 export async function getCachedMarketCards(): Promise<WatchlistCardData[] | null> {
-  const raw = await redis.get<WatchlistCardData[]>(KEYS.marketCards);
-  return Array.isArray(raw) && raw.length > 0 ? raw : null;
+  const count = await redis.get<number>(KEYS.marketCardsChunkCount);
+  if (!count || count <= 0) return null;
+
+  const keys = Array.from({ length: count }, (_, i) => marketCardsChunkKey(i));
+  const chunks = await redis.mget<WatchlistCardData[][]>(...keys);
+  if (chunks.some((c) => !Array.isArray(c))) return null; // a chunk expired/missing — treat as a full cache miss
+
+  const merged = chunks.flat();
+  return merged.length > 0 ? merged : null;
 }
 
 export async function setCachedMarketCards(cards: WatchlistCardData[]): Promise<void> {
-  await redis.set(KEYS.marketCards, cards, { ex: MARKET_CARDS_CACHE_TTL_SECONDS });
+  const chunks = chunkArray(cards, MARKET_CARDS_CHUNK_SIZE);
+  await Promise.all([
+    ...chunks.map((chunk, i) => redis.set(marketCardsChunkKey(i), chunk, { ex: MARKET_CARDS_CACHE_TTL_SECONDS })),
+    redis.set(KEYS.marketCardsChunkCount, chunks.length, { ex: MARKET_CARDS_CACHE_TTL_SECONDS }),
+  ]);
 }
 
 // ---- Per-stock history accumulation ----
@@ -338,7 +367,7 @@ export interface DailyNotificationItem {
   parts: NotificationPart[];
 }
 
-const NOTIFICATIONS_TTL_SECONDS = 30 * 24 * 60 * 60; // one-off daily record, not routine cache — keep a month of history
+const NOTIFICATIONS_TTL_SECONDS = 10 * 24 * 60 * 60; // one-off daily record, not routine cache — keep 10 days of history
 
 function notificationsKey(userId: string, date: string): string {
   return `notifications:${userId}:${date}`;
@@ -366,7 +395,7 @@ export interface DailyNotificationGroup {
  * cheap-to-compute key list — then read in one chunked MGET (mgetChunked, used the same way by
  * getStoredPriceHistoryBulk above) instead of one round-trip per day.
  */
-export async function getNotificationHistory(userId: string, days = 30): Promise<DailyNotificationGroup[]> {
+export async function getNotificationHistory(userId: string, days = 10): Promise<DailyNotificationGroup[]> {
   const now = new Date();
   const dates = Array.from({ length: days }, (_, i) => {
     const d = new Date(now);

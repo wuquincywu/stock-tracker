@@ -455,7 +455,13 @@ async function buildAllMarketCards(): Promise<WatchlistCardData[]> {
   const [directory, maLines] = await Promise.all([getStockDirectory(), getMaLines()]);
   // Some stocks' history may still be incomplete or missing (market-wide backfill still catching
   // up); their badges just don't show yet until it reaches them.
-  return buildCardsForEntries(directory, DEFAULT_CHART_MONTHS, maLines);
+  const cards = await buildCardsForEntries(directory, DEFAULT_CHART_MONTHS, maLines);
+
+  // Sorted once here (this only reruns every MARKET_CARDS_CACHE_TTL_MS, not per request) instead of
+  // by every reader — the default view (no filter, sort=code asc, by far the most common case) can
+  // then just filter+slice this array as-is without a redundant re-sort of its own. See
+  // app/api/market/route.ts and app/market/page.tsx.
+  return cards.sort((a, b) => a.code.localeCompare(b.code));
 }
 
 /**

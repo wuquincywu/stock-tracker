@@ -13,3 +13,13 @@ export async function chunkedMap<T, R>(items: T[], size: number, fn: (item: T) =
   }
   return results;
 }
+
+/** Splits `items` into consecutive groups of at most `size` — used by lib/redis.ts to split the
+ * "所有股票" market-cards cache across several Redis values instead of one giant one (see
+ * MARKET_CARDS_CHUNK_SIZE's doc comment). Always returns at least one (possibly empty) chunk. */
+export function chunkArray<T>(items: T[], size: number): T[][] {
+  if (items.length === 0) return [[]];
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size));
+  return chunks;
+}

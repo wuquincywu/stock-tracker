@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { matchesFilters, parseFilterParams, parsePageParam, sortCards } from "@/lib/cardFilters";
+import { isDefaultSort, matchesFilters, parseFilterParams, parsePageParam, sortCards } from "@/lib/cardFilters";
 import { getAllMarketCards } from "@/lib/marketdata";
 
 const DEFAULT_LIMIT = 50;
@@ -21,7 +21,9 @@ export async function GET(req: NextRequest) {
 
   const allCards = await getAllMarketCards();
   const filtered = allCards.filter((card) => matchesFilters(card, state));
-  const sorted = sortCards(filtered, state.sort, state.dir, state.streakCategory);
+  // allCards is already code-sorted (see buildAllMarketCards) and filter() preserves order, so the
+  // default sort never needs a redundant re-sort of the (possibly ~2,400-card) filtered result.
+  const sorted = isDefaultSort(state) ? filtered : sortCards(filtered, state.sort, state.dir, state.streakCategory);
   const pageCards = sorted.slice(offset, offset + limit);
 
   return NextResponse.json({ cards: pageCards, total: filtered.length });

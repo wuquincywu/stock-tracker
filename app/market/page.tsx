@@ -1,4 +1,4 @@
-import { matchesFilters, parseFilterParams, parsePageParam, sortCards } from "@/lib/cardFilters";
+import { isDefaultSort, matchesFilters, parseFilterParams, parsePageParam, sortCards } from "@/lib/cardFilters";
 import { getAllMarketCards } from "@/lib/marketdata";
 import { getWatchlist, hasUnreadNotifications } from "@/lib/redis";
 import { getCurrentUser } from "@/lib/users";
@@ -46,7 +46,11 @@ export default async function MarketPage({
     hasMarketData = allCards.length > 0;
     trackedCodes = watchlist.map((w) => w.code);
     const filtered = allCards.filter((card) => matchesFilters(card, filterState));
-    const sorted = sortCards(filtered, filterState.sort, filterState.dir, filterState.streakCategory);
+    // allCards is already code-sorted (see buildAllMarketCards) and filter() preserves order, so
+    // the default sort never needs a redundant re-sort of the (possibly ~2,400-card) filtered result.
+    const sorted = isDefaultSort(filterState)
+      ? filtered
+      : sortCards(filtered, filterState.sort, filterState.dir, filterState.streakCategory);
     initialTotal = sorted.length;
     initialCards = sorted.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
     unread = unreadResult;
