@@ -13,6 +13,7 @@ import type {
   NotificationPart,
   PriceRow,
   PushSubscriptionRecord,
+  ShareholderConcentrationRow,
   WatchlistCardData,
   WatchlistEntry,
 } from "./types";
@@ -350,6 +351,46 @@ export async function getStoredPriceHistoryBulk(codes: string[]): Promise<Map<st
 export async function getStoredInstitutionalHistoryBulk(codes: string[]): Promise<Map<string, InstitutionalRow[]>> {
   const values = await mgetChunked<InstitutionalRow[]>(codes.map(historyInstitutionalKey));
   const map = new Map<string, InstitutionalRow[]>();
+  codes.forEach((code, i) => map.set(code, Array.isArray(values[i]) ? values[i]! : []));
+  return map;
+}
+
+// ---- 集保戶股權分散表 (big-holder / 千張大戶 concentration, weekly) ----
+// Same accumulate-forever-by-date pattern as price/institutional history above, just weekly instead
+// of daily — TDCC's feed (lib/tdcc.ts) only ever serves the current week's snapshot, so this is the
+// only place this app's own history for it exists at all.
+
+const SHAREHOLDER_CONCENTRATION_CAP_WEEKS = 208; // ~4 years of weekly snapshots
+
+function historyShareholderConcentrationKey(code: string): string {
+  return `history:shareholderConcentration:${code}`;
+}
+
+export async function getStoredShareholderConcentration(code: string): Promise<ShareholderConcentrationRow[]> {
+  const raw = await redis.get<ShareholderConcentrationRow[]>(historyShareholderConcentrationKey(code));
+  return Array.isArray(raw) ? raw : [];
+}
+
+export async function mergeStoredShareholderConcentration(
+  code: string,
+  fresh: ShareholderConcentrationRow[],
+): Promise<ShareholderConcentrationRow[]> {
+  if (fresh.length === 0) return getStoredShareholderConcentration(code);
+
+  const existing = await getStoredShareholderConcentration(code);
+  const merged = mergeHistory(existing, fresh, SHAREHOLDER_CONCENTRATION_CAP_WEEKS);
+
+  await redis.set(historyShareholderConcentrationKey(code), merged);
+  return merged;
+}
+
+/** Same shape as `getStoredPriceHistoryBulk`/`getStoredInstitutionalHistoryBulk` above, for the
+ * market-wide card cache's third bulk read. */
+export async function getStoredShareholderConcentrationBulk(
+  codes: string[],
+): Promise<Map<string, ShareholderConcentrationRow[]>> {
+  const values = await mgetChunked<ShareholderConcentrationRow[]>(codes.map(historyShareholderConcentrationKey));
+  const map = new Map<string, ShareholderConcentrationRow[]>();
   codes.forEach((code, i) => map.set(code, Array.isArray(values[i]) ? values[i]! : []));
   return map;
 }

@@ -3,9 +3,17 @@ import {
   bollingerBands,
   classifyInstitutionalLevel,
   computeInstitutionalStreaks,
+  computeShareholderConcentrationSignal,
   latestMaSnapshot,
 } from "./indicators";
-import type { InstitutionalRow, MaLine, Market, PriceRow, WatchlistCardData } from "./types";
+import type {
+  InstitutionalRow,
+  MaLine,
+  Market,
+  PriceRow,
+  ShareholderConcentrationRow,
+  WatchlistCardData,
+} from "./types";
 
 /** Structural subset of both WatchlistEntry and StockDirectoryEntry — both are already exactly
  * {code, name, market}, so one function can build a card for either without depending on either
@@ -29,11 +37,14 @@ export function buildCard(
   priceSeries: PriceRow[],
   institutional: InstitutionalRow[],
   maLines: MaLine[],
+  shareholderConcentrationSeries: ShareholderConcentrationRow[] = [],
 ): WatchlistCardData {
   const level = classifyInstitutionalLevel(institutional);
   const streaks = computeInstitutionalStreaks(institutional);
   const bollinger = priceSeries.length > 0 ? analyzeBollinger(priceSeries, bollingerBands(priceSeries)) : null;
   const maSnapshot = latestMaSnapshot(priceSeries, maLines);
+  const concentrationSignal = computeShareholderConcentrationSignal(shareholderConcentrationSeries);
+  const shareholderConcentration = concentrationSignal.latestPct !== null ? concentrationSignal : null;
 
   let price: number | null = null;
   let change: number | null = null;
@@ -59,5 +70,6 @@ export function buildCard(
     price,
     change,
     changePct,
+    shareholderConcentration,
   } satisfies WatchlistCardData;
 }

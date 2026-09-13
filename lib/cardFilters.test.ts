@@ -23,6 +23,7 @@ function makeCard(overrides: Partial<WatchlistCardData> = {}): WatchlistCardData
     price: null,
     change: null,
     changePct: null,
+    shareholderConcentration: null,
     ...overrides,
   };
 }

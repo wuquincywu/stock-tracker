@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildCard } from "./cardBuilder";
-import type { InstitutionalRow, PriceRow } from "./types";
+import type { InstitutionalRow, PriceRow, ShareholderConcentrationRow } from "./types";
 
 const entry = { code: "2330", name: "台積電", market: "TWSE" as const };
 
@@ -54,5 +54,19 @@ describe("buildCard", () => {
   it("only includes MA snapshots for lines with enough warm-up history", () => {
     const card = buildCard(entry, makePrices(Array.from({ length: 5 }, () => 100)), [], [5, 20, 60]);
     expect(card.maSnapshot.map((s) => s.ma)).toEqual([5]); // not enough rows yet for MA20/MA60
+  });
+
+  it("defaults shareholderConcentration to null when no weekly snapshots have been captured yet", () => {
+    const card = buildCard(entry, [], [], [5, 20, 60]);
+    expect(card.shareholderConcentration).toBeNull();
+  });
+
+  it("carries through the big-holder concentration signal once weekly snapshots exist", () => {
+    const concentration: ShareholderConcentrationRow[] = [
+      { date: "2026-09-04", bigHolderCount: 100, bigHolderShares: 1000, bigHolderPct: 60 },
+      { date: "2026-09-11", bigHolderCount: 100, bigHolderShares: 1050, bigHolderPct: 62 },
+    ];
+    const card = buildCard(entry, [], [], [5, 20, 60], concentration);
+    expect(card.shareholderConcentration).toEqual({ latestPct: 62, weekChangePct: 2 });
   });
 });

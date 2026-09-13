@@ -117,6 +117,28 @@ export interface MaSnapshot {
   above: boolean;
 }
 
+/**
+ * One weekly snapshot of 千張大戶 (big-holder) concentration for a stock, from TDCC's free
+ * 集保戶股權分散表 open data (持股分級 tier 15 = 1,000,001+ shares — see lib/tdcc.ts's doc comment
+ * for the full tier table this was reverse-engineered against real data). TDCC only ever publishes
+ * the LATEST week (no date-range query), so this app's own history for it can only accumulate
+ * forward from whenever it's first captured, one week at a time.
+ */
+export interface ShareholderConcentrationRow {
+  date: string; // Friday's date (YYYY-MM-DD) that this snapshot reflects
+  bigHolderCount: number; // 人數 holding 1,000,001+ shares
+  bigHolderShares: number; // 股數 held by that tier
+  bigHolderPct: number; // that tier's 占集保庫存數比例%
+}
+
+/** Derived from a stock's ShareholderConcentrationRow[]: current 大戶 concentration and how much it
+ * moved week-over-week. Both null until at least one weekly snapshot has been captured;
+ * `weekChangePct` stays null for one additional week after that (needs two points to diff). */
+export interface ShareholderConcentrationSignal {
+  latestPct: number | null;
+  weekChangePct: number | null;
+}
+
 export interface NotificationPart {
   text: string;
   /** Drives an outline highlight on the 通知 page — true only for an MA alert whose direction
@@ -135,4 +157,5 @@ export interface WatchlistCardData extends WatchlistEntry {
   price: number | null;
   change: number | null;
   changePct: number | null;
+  shareholderConcentration: ShareholderConcentrationSignal | null;
 }

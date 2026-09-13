@@ -11,13 +11,16 @@ import {
   getStoredInstitutionalHistoryBulk,
   getStoredPriceHistory,
   getStoredPriceHistoryBulk,
+  getStoredShareholderConcentrationBulk,
   isHistoryFresh,
   markHistoryFresh,
   mergeStoredInstitutionalHistory,
   mergeStoredPriceHistory,
+  mergeStoredShareholderConcentration,
   setCachedMarketCards,
   setCachedStockDirectory,
 } from "./redis";
+import * as tdcc from "./tdcc";
 import * as tpex from "./tpex";
 import * as twse from "./twse";
 import type { BollingerPoint, InstitutionalRow, MaLine, Market, PriceRow, WatchlistCardData } from "./types";
@@ -402,6 +405,32 @@ export async function backfillTwseMarketPrices(
   return { attempted, updated, skipped, failed, completed: attempted >= twseStocks.length };
 }
 
+export interface ShareholderConcentrationRefreshSummary {
+  stocksUpdated: number;
+}
+
+/**
+ * Weekly whole-market refresh of 集保戶股權分散表 (big-holder / 千張大戶 concentration, tier 15 —
+ * see lib/tdcc.ts). TDCC's free open-data endpoint only ever serves the latest week's snapshot (no
+ * date-range query, unlike TWSE's per-stock STOCK_DAY), so this app's own history for it can only
+ * ever grow forward from whenever this first runs — same "free, whole-market-per-call" shape as
+ * backfillMarketInstitutional above, just triggered weekly instead of daily (see
+ * app/api/cron/refresh-shareholder-concentration/route.ts) since the underlying data itself only
+ * changes once a week (Friday close, published ~16:00).
+ */
+export async function refreshMarketShareholderConcentration(): Promise<ShareholderConcentrationRefreshSummary> {
+  const [snapshot, directory] = await Promise.all([tdcc.getShareholderConcentrationSnapshot(), getStockDirectory()]);
+  const directoryCodes = new Set(directory.map((d) => d.code));
+
+  // TDCC's feed covers every deposited security (ETFs, bonds, etc.), not just this app's stock
+  // directory — only merge in codes this app actually tracks/shows, same filtering approach as
+  // backfillMarketInstitutional does against T86/TPEX's own whole-market rows.
+  const codes = [...snapshot.keys()].filter((code) => directoryCodes.has(code));
+  await chunkedMap(codes, 20, (code) => mergeStoredShareholderConcentration(code, [snapshot.get(code)!]));
+
+  return { stocksUpdated: codes.length };
+}
+
 interface MarketCardsCache {
   cards: WatchlistCardData[];
   builtAt: number;
@@ -421,11 +450,12 @@ const MARKET_CARDS_CACHE_TTL_MS = 15 * 60 * 1000;
 let inFlightBuild: Promise<WatchlistCardData[]> | null = null;
 
 /**
- * Bulk-reads stored price/institutional history for `entries` and builds a rich card for each via
- * `buildCard` (lib/cardBuilder.ts) — the shared implementation used by both the watchlist page
- * (per-user tracked stocks) and the market-wide cache below (the whole directory). Two bulk MGETs
- * total, regardless of how many entries — never a per-stock round-trip, and never a live fetch
- * (reads only what's already stored; see getPriceSeries/getInstitutionalSeries's own doc comments).
+ * Bulk-reads stored price/institutional/big-holder history for `entries` and builds a rich card for
+ * each via `buildCard` (lib/cardBuilder.ts) — the shared implementation used by both the watchlist
+ * page (per-user tracked stocks) and the market-wide cache below (the whole directory). Three bulk
+ * MGETs total, regardless of how many entries — never a per-stock round-trip, and never a live
+ * fetch (reads only what's already stored; see getPriceSeries/getInstitutionalSeries's own doc
+ * comments — the big-holder history is likewise only ever updated by the weekly refresh below).
  */
 export async function buildCardsForEntries(
   entries: CardIdentity[],
@@ -433,9 +463,10 @@ export async function buildCardsForEntries(
   maLines: MaLine[],
 ): Promise<WatchlistCardData[]> {
   const codes = entries.map((e) => e.code);
-  const [priceMap, institutionalMap] = await Promise.all([
+  const [priceMap, institutionalMap, concentrationMap] = await Promise.all([
     getStoredPriceHistoryBulk(codes),
     getStoredInstitutionalHistoryBulk(codes),
+    getStoredShareholderConcentrationBulk(codes),
   ]);
 
   const cutoff = new Date();
@@ -445,7 +476,8 @@ export async function buildCardsForEntries(
   return entries.map((entry) => {
     const priceSeries = (priceMap.get(entry.code) ?? []).filter((p) => p.date >= cutoffStr);
     const institutional = institutionalMap.get(entry.code) ?? [];
-    return buildCard(entry, priceSeries, institutional, maLines);
+    const concentration = concentrationMap.get(entry.code) ?? [];
+    return buildCard(entry, priceSeries, institutional, maLines, concentration);
   });
 }
 

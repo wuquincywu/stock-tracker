@@ -4,8 +4,9 @@ import {
   bollingerBands,
   classifyInstitutionalLevel,
   computeInstitutionalStreak,
+  computeShareholderConcentrationSignal,
 } from "./indicators";
-import type { InstitutionalRow, PriceRow } from "./types";
+import type { InstitutionalRow, PriceRow, ShareholderConcentrationRow } from "./types";
 
 function makePrices(closes: number[]): PriceRow[] {
   return closes.map((close, i) => ({
@@ -114,5 +115,30 @@ describe("computeInstitutionalStreak", () => {
       makeInstitutionalRow("d4", 100),
     ];
     expect(computeInstitutionalStreak(series)).toEqual({ direction: "buy", length: 2 });
+  });
+});
+
+function makeConcentrationRow(date: string, bigHolderPct: number): ShareholderConcentrationRow {
+  return { date, bigHolderCount: 100, bigHolderShares: 1_000_000, bigHolderPct };
+}
+
+describe("computeShareholderConcentrationSignal", () => {
+  it("returns all-null with no history yet", () => {
+    expect(computeShareholderConcentrationSignal([])).toEqual({ latestPct: null, weekChangePct: null });
+  });
+
+  it("returns the latest % with a null week-over-week change after only one snapshot", () => {
+    const series = [makeConcentrationRow("2026-09-04", 60)];
+    expect(computeShareholderConcentrationSignal(series)).toEqual({ latestPct: 60, weekChangePct: null });
+  });
+
+  it("computes the percentage-point change from the previous week once there are two snapshots", () => {
+    const series = [makeConcentrationRow("2026-09-04", 60), makeConcentrationRow("2026-09-11", 62.5)];
+    expect(computeShareholderConcentrationSignal(series)).toEqual({ latestPct: 62.5, weekChangePct: 2.5 });
+  });
+
+  it("reports a negative change when concentration drops", () => {
+    const series = [makeConcentrationRow("2026-09-04", 60), makeConcentrationRow("2026-09-11", 58)];
+    expect(computeShareholderConcentrationSignal(series).weekChangePct).toBeCloseTo(-2);
   });
 });

@@ -9,6 +9,8 @@ import type {
   MaLine,
   MaSnapshot,
   PriceRow,
+  ShareholderConcentrationRow,
+  ShareholderConcentrationSignal,
   StreakDirection,
 } from "./types";
 
@@ -170,5 +172,22 @@ export function computeInstitutionalStreaks(series: InstitutionalRow[]): Institu
     trust: computeInstitutionalStreak(series, "trust"),
     dealer: computeInstitutionalStreak(series, "dealer"),
     combined: computeInstitutionalStreak(series, "combined"),
+  };
+}
+
+/**
+ * Big-holder (千張大戶, TDCC tier 15) concentration signal from a stock's weekly history:
+ * current %, and the percentage-point change from the previous week's snapshot. `weekChangePct` is
+ * null with fewer than two snapshots — a brand-new capture has nothing yet to diff against.
+ */
+export function computeShareholderConcentrationSignal(
+  series: ShareholderConcentrationRow[],
+): ShareholderConcentrationSignal {
+  if (series.length === 0) return { latestPct: null, weekChangePct: null };
+  const latest = series[series.length - 1];
+  const prev = series.length > 1 ? series[series.length - 2] : null;
+  return {
+    latestPct: latest.bigHolderPct,
+    weekChangePct: prev ? latest.bigHolderPct - prev.bigHolderPct : null,
   };
 }

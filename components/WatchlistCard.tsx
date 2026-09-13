@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { BollingerCompactBadges } from "@/components/BollingerBadges";
-import { InstitutionalLevelBadge, StreakBadges } from "@/components/InstitutionalBadges";
+import { InstitutionalLevelBadge, ShareholderConcentrationBadges, StreakBadges } from "@/components/InstitutionalBadges";
 import type { InstitutionalCategory, InstitutionalLevel, MaLine, WatchlistCardData } from "@/lib/types";
 
 export type { WatchlistCardData } from "@/lib/types";
@@ -80,11 +80,13 @@ export default function WatchlistCard({
       {(card.maSnapshot.length > 0 ||
         card.level ||
         Object.values(card.streaks).some((s) => s && s.length >= 2) ||
-        (card.bollinger && card.bollinger.percentB !== null)) && (
+        (card.bollinger && card.bollinger.percentB !== null) ||
+        card.shareholderConcentration) && (
         <div className="mt-2 flex flex-wrap gap-1.5">
           {card.level && <InstitutionalLevelBadge level={card.level} highlighted={highlight.levels.has(card.level)} />}
           <StreakBadges streaks={card.streaks} highlightCategory={highlight.streakCategory} />
           {card.bollinger && <BollingerCompactBadges signal={card.bollinger} />}
+          <ShareholderConcentrationBadges signal={card.shareholderConcentration} />
           {card.maSnapshot.map((s) => (
             <span
               key={s.ma}
