@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { refreshMarketShareholderConcentration } from "@/lib/marketdata";
+import { setCronStatus } from "@/lib/redis";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -22,9 +23,19 @@ export async function GET(req: NextRequest) {
 
   try {
     const summary = await refreshMarketShareholderConcentration();
+    await setCronStatus("shareholderConcentration", {
+      at: new Date().toISOString(),
+      ok: true,
+      summary: { stocksUpdated: summary.stocksUpdated },
+    }).catch((err) => console.error("[refresh-shareholder-concentration] failed to record cron status:", err));
     return NextResponse.json({ ok: true, ...summary });
   } catch (err) {
     console.error("[refresh-shareholder-concentration] run failed:", err);
+    await setCronStatus("shareholderConcentration", {
+      at: new Date().toISOString(),
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    }).catch((statusErr) => console.error("[refresh-shareholder-concentration] failed to record cron status:", statusErr));
     return NextResponse.json({ error: "refresh failed" }, { status: 500 });
   }
 }

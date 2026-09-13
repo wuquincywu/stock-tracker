@@ -27,7 +27,6 @@ const KEYS = {
   stockDirectoryFreshMarker: "cache:stockDirectory:fresh",
   marketCardsChunkCount: "cache:marketCards:count",
   users: "users:list",
-  cronStatus: "status:cron:checkAlerts",
 } as const;
 
 const STOCK_DIRECTORY_TTL_SECONDS = 24 * 60 * 60; // stock list changes rarely — refresh once a day
@@ -502,26 +501,35 @@ export async function hasUnreadNotifications(userId: string): Promise<boolean> {
   return Array.isArray(items) && items.length > 0 && lastRead !== today;
 }
 
-// ---- Daily cron observability ----
-// Nothing previously recorded whether the daily check-alerts cron actually ran, or ran
-// successfully — if it silently failed for days (TWSE WAF, FinMind quota, a 60s timeout), the only
-// visible symptom was stale prices with no error surfaced anywhere. This is a lightweight status
-// record, not a full log: just enough to answer "did today's check run, and did it work".
+// ---- Cron observability ----
+// Nothing previously recorded whether a cron actually ran, or ran successfully — if one silently
+// failed for days (TWSE WAF, FinMind quota, a 60s timeout, TDCC's feed truncating — all things that
+// have genuinely happened), the only visible symptom was stale data with no error surfaced
+// anywhere. This is a lightweight status record per cron, not a full log: just enough to answer
+// "did today's/this week's run happen, and did it work". Shown on the Settings page.
+
+export type CronName = "checkAlerts" | "shareholderConcentration";
+
+function cronStatusKey(name: CronName): string {
+  return `status:cron:${name}`;
+}
 
 export interface CronStatus {
   at: string; // ISO timestamp of when the run finished (successfully or not)
   ok: boolean;
-  /** Present when ok is true: a short summary of what the run did. */
-  summary?: { users: number; checked: number; sent: number; failed: number };
+  /** Present when ok is true: a short summary of what the run did — shape varies per cron
+   * (checkAlerts reports users/checked/sent/failed, shareholderConcentration reports
+   * stocksUpdated), so this stays a loose numeric bag rather than a rigid per-cron type. */
+  summary?: Record<string, number>;
   /** Present when ok is false: the error message, for a human glancing at Settings, not a stack trace. */
   error?: string;
 }
 
-export async function setCronStatus(status: CronStatus): Promise<void> {
-  await redis.set(KEYS.cronStatus, status);
+export async function setCronStatus(name: CronName, status: CronStatus): Promise<void> {
+  await redis.set(cronStatusKey(name), status);
 }
 
-export async function getCronStatus(): Promise<CronStatus | null> {
-  const raw = await redis.get<CronStatus>(KEYS.cronStatus);
+export async function getCronStatus(name: CronName): Promise<CronStatus | null> {
+  const raw = await redis.get<CronStatus>(cronStatusKey(name));
   return raw && typeof raw === "object" ? raw : null;
 }

@@ -56,7 +56,7 @@ export async function GET(req: NextRequest) {
       { ...EMPTY_ALERT_SUMMARY },
     );
 
-    await setCronStatus({
+    await setCronStatus("checkAlerts", {
       at: new Date().toISOString(),
       ok: true,
       summary: { users: users.length, checked: totals.checked, sent: totals.sent, failed: totals.failed },
@@ -65,7 +65,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ users: users.length, ...totals, perUser });
   } catch (err) {
     console.error("[check-alerts] run failed:", err);
-    await setCronStatus({
+    await setCronStatus("checkAlerts", {
       at: new Date().toISOString(),
       ok: false,
       error: err instanceof Error ? err.message : String(err),

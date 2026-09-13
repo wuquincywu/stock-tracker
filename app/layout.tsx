@@ -55,6 +55,11 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
               <Link href="/settings" className="text-sm text-zinc-400 hover:text-zinc-100">
                 通知設定
               </Link>
+              {currentUser === "Admin" && (
+                <Link href="/health" className="text-sm text-zinc-400 hover:text-zinc-100">
+                  健康檢查
+                </Link>
+              )}
               <UserSwitcher name={currentUser} />
             </div>
           )}
