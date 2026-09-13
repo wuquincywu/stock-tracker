@@ -104,6 +104,13 @@ export async function removeFromWatchlist(userId: string, code: string): Promise
   await redis.hdel(watchlistKey(userId), code);
 }
 
+/** Cheaper than getWatchlist(userId).some(...) when only membership matters (e.g. deciding whether
+ * to show the per-stock notification-settings link on the stock detail page) — one HEXISTS instead
+ * of fetching and deserializing the whole hash. */
+export async function isInWatchlist(userId: string, code: string): Promise<boolean> {
+  return (await redis.hexists(watchlistKey(userId), code)) === 1;
+}
+
 function subscriptionsKey(userId: string): string {
   return `push:subscriptions:${userId}`;
 }
@@ -172,20 +179,17 @@ function parseMaAlerts(raw: Record<string, unknown>): MaAlertKey[] {
   return valid;
 }
 
-function alertConfigKey(userId: string): string {
-  return `config:alerts:${userId}`;
-}
-
-export async function getAlertConfig(userId: string): Promise<AlertConfig> {
-  const raw = await redis.get<Record<string, unknown>>(alertConfigKey(userId));
-  if (!raw) return DEFAULT_ALERT_CONFIG;
+/** Shared by getAlertConfig and getStockAlertConfig — both store the exact same shape, just under
+ * different keys (whole-user vs one stock). */
+function parseAlertConfig(raw: Record<string, unknown>): AlertConfig {
   const levels = Array.isArray(raw.levels)
     ? (raw.levels as InstitutionalLevel[]).filter((l) => INSTITUTIONAL_LEVEL_ORDER.includes(l))
     : [];
   return { levels, streakThresholds: parseStreakThresholds(raw), maAlerts: parseMaAlerts(raw) };
 }
 
-export async function setAlertConfig(userId: string, config: AlertConfig): Promise<void> {
+/** Shared by setAlertConfig and setStockAlertConfig. */
+function sanitizeAlertConfig(config: AlertConfig): AlertConfig {
   const levels = config.levels.filter((l) => INSTITUTIONAL_LEVEL_ORDER.includes(l));
   const streakThresholds: Record<InstitutionalCategory, number> = { foreign: 0, trust: 0, dealer: 0, combined: 0 };
   for (const category of INSTITUTIONAL_CATEGORY_ORDER) {
@@ -193,7 +197,76 @@ export async function setAlertConfig(userId: string, config: AlertConfig): Promi
     streakThresholds[category] = Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
   }
   const maAlerts = (config.maAlerts ?? []).filter((k) => ALL_MA_ALERT_KEYS.includes(k));
-  await redis.set(alertConfigKey(userId), { levels, streakThresholds, maAlerts });
+  return { levels, streakThresholds, maAlerts };
+}
+
+function alertConfigKey(userId: string): string {
+  return `config:alerts:${userId}`;
+}
+
+export async function getAlertConfig(userId: string): Promise<AlertConfig> {
+  const raw = await redis.get<Record<string, unknown>>(alertConfigKey(userId));
+  if (!raw) return DEFAULT_ALERT_CONFIG;
+  return parseAlertConfig(raw);
+}
+
+export async function setAlertConfig(userId: string, config: AlertConfig): Promise<void> {
+  await redis.set(alertConfigKey(userId), sanitizeAlertConfig(config));
+}
+
+// ---- Per-stock alert config override ----
+// "個股通知若沒額外設定則以共同設定" — a stock either has its own full override (this key exists)
+// or it doesn't (falls back to the user's whole-account getAlertConfig above) — deliberately
+// whole-stock, not per-field, so "is this stock customized" is just "does this key exist", and
+// reverting to shared settings is one delete instead of having to manually re-match every field.
+
+function stockAlertConfigKey(userId: string, code: string): string {
+  return `config:alerts:${userId}:${code}`;
+}
+
+function alertOverrideCodesKey(userId: string): string {
+  return `config:alerts:overrideCodes:${userId}`;
+}
+
+export async function getStockAlertConfig(userId: string, code: string): Promise<AlertConfig | null> {
+  const raw = await redis.get<Record<string, unknown>>(stockAlertConfigKey(userId, code));
+  return raw ? parseAlertConfig(raw) : null;
+}
+
+export async function setStockAlertConfig(userId: string, code: string, config: AlertConfig): Promise<void> {
+  await Promise.all([
+    redis.set(stockAlertConfigKey(userId, code), sanitizeAlertConfig(config)),
+    redis.sadd(alertOverrideCodesKey(userId), code),
+  ]);
+}
+
+/** Reverts a stock back to the user's shared settings (see the module comment above). */
+export async function clearStockAlertConfig(userId: string, code: string): Promise<void> {
+  await Promise.all([
+    redis.del(stockAlertConfigKey(userId, code)),
+    redis.srem(alertOverrideCodesKey(userId), code),
+  ]);
+}
+
+/** Which of this user's tracked codes currently have their own override — for the "已自訂" tag on
+ * the Settings page's tracked-stock list. A Redis Set kept in sync by set/clearStockAlertConfig,
+ * not discovered via KEYS/SCAN. */
+export async function getOverriddenStockCodes(userId: string): Promise<string[]> {
+  const raw = await redis.smembers(alertOverrideCodesKey(userId));
+  return Array.isArray(raw) ? raw : [];
+}
+
+/** Bulk-reads per-stock overrides for many codes at once (one chunked MGET) — for
+ * processUserAlerts, which needs to know per-stock which config applies without a round-trip per
+ * tracked stock. Codes with no override simply aren't in the returned map. */
+export async function getStockAlertConfigsBulk(userId: string, codes: string[]): Promise<Map<string, AlertConfig>> {
+  const values = await mgetChunked<Record<string, unknown>>(codes.map((code) => stockAlertConfigKey(userId, code)));
+  const map = new Map<string, AlertConfig>();
+  codes.forEach((code, i) => {
+    const raw = values[i];
+    if (raw) map.set(code, parseAlertConfig(raw));
+  });
+  return map;
 }
 
 export function clampChartMonths(months: number): number {

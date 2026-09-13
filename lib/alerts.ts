@@ -3,7 +3,7 @@ import { taipeiDateString } from "./date";
 import { classifyInstitutionalLevel, computeInstitutionalStreaks, latestMaSnapshot } from "./indicators";
 import { getInstitutionalSeries, getPriceSeries, refreshInstitutionalSeries, refreshPriceSeries } from "./marketdata";
 import { broadcastPush } from "./push";
-import { getAlertConfig, getChartMonths, getWatchlist, setDailyNotifications } from "./redis";
+import { getAlertConfig, getChartMonths, getStockAlertConfigsBulk, getWatchlist, setDailyNotifications } from "./redis";
 import { INSTITUTIONAL_CATEGORY_LABEL, INSTITUTIONAL_CATEGORY_ORDER, INSTITUTIONAL_LEVEL_LABEL } from "./types";
 import type {
   CrossDirection,
@@ -136,6 +136,14 @@ export async function processUserAlerts(
   ]);
   if (watchlist.length === 0) return EMPTY_ALERT_SUMMARY;
 
+  // A stock with its own override (see lib/redis.ts's "個股通知若沒額外設定則以共同設定" comment)
+  // is evaluated against that instead of the account-wide alertConfig above; everything else just
+  // falls through to it. One bulk read for the whole watchlist, not a round-trip per stock.
+  const overrideConfigs = await getStockAlertConfigsBulk(
+    userId,
+    watchlist.map((w) => w.code),
+  );
+
   const results = await chunkedMap(watchlist, BATCH_SIZE, async (entry) => {
     const live = !refreshedCodes?.has(entry.code);
     const result = await checkOne(entry, maLines, chartMonths, live);
@@ -155,6 +163,8 @@ export async function processUserAlerts(
   }
 
   for (const result of results) {
+    const effectiveConfig = overrideConfigs.get(result.code) ?? alertConfig;
+
     // MA alerts fire on current state (站上/低於), not just the crossing moment — comparing
     // against yesterday's snapshot (prevMaSnapshot) tells a genuine crossing moment (side flipped)
     // from just persisting on the same side, which is what actually earns the outline highlight;
@@ -163,7 +173,7 @@ export async function processUserAlerts(
       for (const snap of result.maSnapshot) {
         const direction: CrossDirection = snap.above ? "up" : "down";
         const alertKey: MaAlertKey = `${snap.ma}:${direction}`;
-        if (!alertConfig.maAlerts.includes(alertKey)) continue;
+        if (!effectiveConfig.maAlerts.includes(alertKey)) continue;
 
         const prevSnap = result.prevMaSnapshot.find((p) => p.ma === snap.ma);
         const isCrossMoment = prevSnap ? prevSnap.above !== snap.above : false;
@@ -175,13 +185,13 @@ export async function processUserAlerts(
 
     if (!result.institutionalDate) continue;
 
-    if (result.level && alertConfig.levels.includes(result.level)) {
+    if (result.level && effectiveConfig.levels.includes(result.level)) {
       appendMessage(result.code, `法人${INSTITUTIONAL_LEVEL_LABEL[result.level]}`);
       levelAlertCount++;
     }
 
     for (const category of INSTITUTIONAL_CATEGORY_ORDER) {
-      const threshold = alertConfig.streakThresholds[category];
+      const threshold = effectiveConfig.streakThresholds[category];
       const streak = result.streaks[category];
       if (threshold <= 0 || !streak || streak.length < threshold) continue;
 

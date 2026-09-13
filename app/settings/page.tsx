@@ -1,7 +1,8 @@
-import { DEFAULT_CHART_MONTHS, getAlertConfig, getChartMonths, getCronStatus } from "@/lib/redis";
+import { DEFAULT_CHART_MONTHS, getAlertConfig, getChartMonths, getCronStatus, getOverriddenStockCodes, getWatchlist } from "@/lib/redis";
 import type { CronStatus } from "@/lib/redis";
 import { getCurrentUser } from "@/lib/users";
 import { ALL_MA_ALERT_KEYS } from "@/lib/types";
+import type { WatchlistEntry } from "@/lib/types";
 import SettingsClient from "@/components/SettingsClient";
 import BackButton from "@/components/ui/BackButton";
 
@@ -45,12 +46,16 @@ export default async function SettingsPage() {
   let chartMonths = DEFAULT_CHART_MONTHS;
   let checkAlertsStatus: CronStatus | null = null;
   let concentrationStatus: CronStatus | null = null;
+  let watchlist: WatchlistEntry[] = [];
+  let overriddenCodes: string[] = [];
   try {
-    [config, chartMonths, checkAlertsStatus, concentrationStatus] = await Promise.all([
+    [config, chartMonths, checkAlertsStatus, concentrationStatus, watchlist, overriddenCodes] = await Promise.all([
       getAlertConfig(currentUser),
       getChartMonths(currentUser),
       getCronStatus("checkAlerts"),
       getCronStatus("shareholderConcentration"),
+      getWatchlist(currentUser),
+      getOverriddenStockCodes(currentUser),
     ]);
   } catch {
     // fall back to the defaults above if Redis isn't reachable
@@ -65,7 +70,12 @@ export default async function SettingsPage() {
           套用在整個追蹤清單。等級分類只看三大法人合計，連續買賣天數可分別對外資／投信／自營商／合計各自設定門檻。
         </p>
       </div>
-      <SettingsClient initialConfig={config} initialChartMonths={chartMonths} />
+      <SettingsClient
+        initialConfig={config}
+        initialChartMonths={chartMonths}
+        watchlist={watchlist}
+        overriddenCodes={overriddenCodes}
+      />
 
       <div className="mt-8 flex flex-col gap-1 border-t border-zinc-800 pt-4 text-xs text-zinc-600">
         <CronStatusLine label="上次每日檢查" status={checkAlertsStatus} none="尚無每日檢查紀錄。" />

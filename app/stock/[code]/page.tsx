@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
   analyzeBollinger,
@@ -14,6 +15,8 @@ import {
   institutionalDaysForMonths,
   lookupStock,
 } from "@/lib/marketdata";
+import { isInWatchlist } from "@/lib/redis";
+import { getCurrentUser } from "@/lib/users";
 import { MARKET_LABEL } from "@/lib/types";
 import type { PriceRow } from "@/lib/types";
 import { BollingerDetailBadges } from "@/components/BollingerBadges";
@@ -53,6 +56,12 @@ export default async function StockDetailPage({ params }: { params: Promise<{ co
     );
   }
   if (!info) notFound();
+
+  // Per-stock notification settings only make sense for a stock this user actually tracks (see
+  // app/settings/[code]/page.tsx and its API route) — untracked stocks browsed from 所有股票 just
+  // don't show the shortcut, same as how they don't show a "移除" button either.
+  const currentUser = await getCurrentUser();
+  const tracked = currentUser ? await isInWatchlist(currentUser, code) : false;
 
   // Page load never live-fetches — it's always served from whatever's already stored (kept
   // current by the daily cron / backfills). The chart's own month-range buttons
@@ -112,36 +121,43 @@ export default async function StockDetailPage({ params }: { params: Promise<{ co
             {latestDataDate && <span className="ml-2 text-zinc-600">資料更新至 {latestDataDate}</span>}
           </p>
         </div>
-        {latestPrice !== null && (
-          <div className="flex flex-col items-end leading-none">
-            <span
-              className={`text-4xl font-bold tabular-nums ${
-                priceChange === null || priceChange === 0
-                  ? "text-zinc-100"
-                  : priceChange > 0
-                    ? "text-red-400"
-                    : "text-emerald-400"
-              }`}
-            >
-              {latestPrice.toFixed(2)}
-            </span>
-            {priceChange !== null && priceChangePct !== null && (
+        <div className="flex flex-col items-end gap-1.5">
+          {tracked && (
+            <Link href={`/settings/${code}`} className="text-xs text-zinc-500 hover:text-zinc-100">
+              個股通知設定
+            </Link>
+          )}
+          {latestPrice !== null && (
+            <div className="flex flex-col items-end leading-none">
               <span
-                className={`mt-1.5 text-sm font-medium tabular-nums ${
-                  priceChange === 0
-                    ? "text-zinc-500"
+                className={`text-4xl font-bold tabular-nums ${
+                  priceChange === null || priceChange === 0
+                    ? "text-zinc-100"
                     : priceChange > 0
                       ? "text-red-400"
                       : "text-emerald-400"
                 }`}
               >
-                {priceChange > 0 ? "+" : ""}
-                {priceChange.toFixed(2)} ({priceChange > 0 ? "+" : ""}
-                {priceChangePct.toFixed(2)}%)
+                {latestPrice.toFixed(2)}
               </span>
-            )}
-          </div>
-        )}
+              {priceChange !== null && priceChangePct !== null && (
+                <span
+                  className={`mt-1.5 text-sm font-medium tabular-nums ${
+                    priceChange === 0
+                      ? "text-zinc-500"
+                      : priceChange > 0
+                        ? "text-red-400"
+                        : "text-emerald-400"
+                  }`}
+                >
+                  {priceChange > 0 ? "+" : ""}
+                  {priceChange.toFixed(2)} ({priceChange > 0 ? "+" : ""}
+                  {priceChangePct.toFixed(2)}%)
+                </span>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {(level || Object.values(streaks).some((s) => s && s.length >= 2)) && (
