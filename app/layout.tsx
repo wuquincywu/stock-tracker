@@ -49,17 +49,12 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
           </Link>
           {currentUser && (
             <div className="flex items-center gap-4">
-              <Link href="/faq" className="text-sm text-zinc-400 hover:text-zinc-100">
-                常見問題
-              </Link>
               <Link href="/settings" className="text-sm text-zinc-400 hover:text-zinc-100">
                 通知設定
               </Link>
-              {currentUser === "Admin" && (
-                <Link href="/health" className="text-sm text-zinc-400 hover:text-zinc-100">
-                  健康檢查
-                </Link>
-              )}
+              <Link href="/more" className="text-sm text-zinc-400 hover:text-zinc-100">
+                其他
+              </Link>
               <UserSwitcher name={currentUser} />
             </div>
           )}

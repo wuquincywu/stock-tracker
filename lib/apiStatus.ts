@@ -4,14 +4,14 @@ import * as tdcc from "./tdcc";
 import * as tpex from "./tpex";
 import * as twse from "./twse";
 
-export interface HealthCheckResult {
+export interface ApiStatusCheckResult {
   name: string;
   ok: boolean;
   latencyMs: number;
   error?: string;
 }
 
-async function timed(name: string, fn: () => Promise<unknown>): Promise<HealthCheckResult> {
+async function timed(name: string, fn: () => Promise<unknown>): Promise<ApiStatusCheckResult> {
   const start = Date.now();
   try {
     await fn();
@@ -32,10 +32,10 @@ const PROBE_CODE = "2330";
 /**
  * Round-trips against Redis and every external data source this app depends on, each independently
  * timed and error-isolated (one source failing doesn't block checking the others) — for the
- * Admin-only /health page. Nothing here is cached: every visit is a live check, by design (the
- * whole point is "is it working right now").
+ * /api-status page. Nothing here is cached: every visit is a live check, by design (the whole point
+ * is "is it working right now").
  */
-export async function runHealthChecks(): Promise<HealthCheckResult[]> {
+export async function runApiStatusChecks(): Promise<ApiStatusCheckResult[]> {
   const checks: { name: string; fn: () => Promise<unknown> }[] = [
     { name: "Redis", fn: () => getRegisteredUsers() },
     { name: "TWSE（上市價格）", fn: () => twse.getPriceHistory(PROBE_CODE, 1) },
