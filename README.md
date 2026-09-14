@@ -146,7 +146,7 @@ Never live-fetches for the ~2,400-stock overview. Instead:
 3. `/api/market` filters/sorts/paginates the cached data and returns only the current page (50 cards) to the browser
 
 ### Push notifications (`/api/cron/check-alerts`)
-Vercel Cron fires once per trading day (`vercel.json`, UTC 12:15 = Taipei 20:15, leaving buffer after institutional data is published), requires `CRON_SECRET`:
+Triggered once per trading day at UTC 12:15 = Taipei 20:15 (leaving buffer after institutional data is published), requires `CRON_SECRET`. Triggered by a GitHub Actions schedule (`.github/workflows/check-alerts-cron.yml`) rather than Vercel Cron — Vercel Hobby only guarantees per-hour precision (±59 min) for cron invocations, which was firing this anywhere up to an hour late; GitHub Actions' scheduler is tighter and free regardless of plan:
 1. Loops over every registered user **sequentially** (not in parallel — parallelizing would multiply concurrent load on TWSE/FinMind)
 2. For each user, runs `processUserAlerts` over their watchlist and sends one bundled push if anything qualifies
 
@@ -190,5 +190,5 @@ npm run build && npm run start   # production mode
 Deployed on Vercel's free (Hobby) plan, live at https://stock-tracker-gray-beta.vercel.app:
 - Redis via the Vercel Marketplace Upstash integration (env vars auto-injected)
 - Git-connected to this GitHub repository — pushing to `master` auto-deploys
-- Cron scheduled via `vercel.json` (Hobby allows once per day, hence the fixed "after institutional data is published" trigger time rather than real-time market watching)
+- Weekly shareholder-concentration refresh scheduled via `vercel.json` (Hobby allows once per day per cron, hence the fixed trigger time rather than real-time market watching); the daily `check-alerts` cron instead runs via GitHub Actions (see above) since its timing matters more and Vercel Hobby's cron precision is only ±59 min
 - `app/api/admin/backfill-market/route.ts`'s `maxDuration` is capped at Hobby's hard 60-second limit; both backfill calls it makes are time-budgeted and safely resumable rather than assuming they'll finish in one invocation
