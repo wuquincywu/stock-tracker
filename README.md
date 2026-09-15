@@ -146,7 +146,7 @@ Never live-fetches for the ~2,400-stock overview. Instead:
 3. `/api/market` filters/sorts/paginates the cached data and returns only the current page (50 cards) to the browser
 
 ### Push notifications (`/api/cron/check-alerts`)
-Triggered once per trading day at UTC 13:32 = Taipei 21:32 (leaving buffer after institutional data is published; the odd minute avoids GitHub's most contended scheduling slots), requires `CRON_SECRET`. Triggered by a GitHub Actions schedule (`.github/workflows/check-alerts-cron.yml`) rather than Vercel Cron — Vercel Hobby only guarantees per-hour precision (±59 min) for cron invocations, which was firing this anywhere up to an hour late; GitHub Actions' scheduler is tighter and free regardless of plan:
+Triggered once per trading day at UTC 00:15 = Taipei 08:15, before the market opens, evaluating the previous session's already-published data. Requires `CRON_SECRET`. Triggered by a GitHub Actions schedule (`.github/workflows/check-alerts-cron.yml`) rather than Vercel Cron — Vercel Hobby only guarantees per-hour precision (±59 min) for cron invocations, which was firing this anywhere up to an hour late; GitHub Actions' scheduler is tighter and free regardless of plan:
 1. Loops over every registered user **sequentially** (not in parallel — parallelizing would multiply concurrent load on TWSE/FinMind)
 2. For each user, runs `processUserAlerts` over their watchlist and sends one bundled push if anything qualifies
 
