@@ -19,13 +19,7 @@ export async function GET(req: NextRequest) {
   // symptom beyond stale prices. Shown on the Settings page. Wraps the whole handler, not just the
   // per-user loop below (which already has its own per-user try/catch, unaffected by this).
   try {
-    const [allUsers, maLines] = await Promise.all([getRegisteredUsers(), getMaLines()]);
-
-    // TEMPORARY: scoped to Admin only while the trigger schedule itself is unreliable (GitHub
-    // Actions' `schedule` event hasn't fired once yet — see .github/workflows/check-alerts-cron.yml)
-    // — extra/duplicate manual runs during that debugging shouldn't push notifications to the other
-    // registered users. Revert to `allUsers` once the schedule is confirmed stable.
-    const users = allUsers.filter((u) => u === "Admin");
+    const [users, maLines] = await Promise.all([getRegisteredUsers(), getMaLines()]);
 
     // One Set shared across every user's call this run: small trusted groups tend to have
     // overlapping watchlists (everyone tracking 2330), and without this, a stock tracked by N users

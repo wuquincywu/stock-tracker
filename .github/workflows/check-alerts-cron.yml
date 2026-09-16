@@ -1,14 +1,11 @@
 name: Trigger check-alerts cron
 
-# Vercel Hobby's own cron only guarantees per-hour precision (±59 min) — see README's "Push
-# notifications" section. GitHub Actions' scheduler is tighter, so this calls the same endpoint
-# Vercel's cron used to, from here instead. Runs before the Taipei market opens, on the previous
-# session's already-published data, rather than in the evening right after it lands. The odd
-# minute is deliberate: GitHub delays or silently drops scheduled runs under load, and :00/:15/:30
-# are the most contended slots.
+# Actual daily scheduling now lives on cron-job.org (Taipei 20:15, after institutional data
+# publishes) — GitHub's own `schedule` event proved unreliable here: it went from never firing at
+# all across three different cron times, to firing over 4 hours late the one time it did (see git
+# history on this file). Kept only for manual on-demand runs (workflow_dispatch), e.g. to test
+# after a code change without waiting for the next scheduled trigger.
 on:
-  schedule:
-    - cron: "33 0 * * 1-5"
   workflow_dispatch: {}
 
 jobs:
